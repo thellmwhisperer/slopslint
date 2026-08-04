@@ -1,0 +1,65 @@
+name: slopslint
+description: >
+  Blocking slop gate: duplication scopes, tombstone records, and a monotonic
+  ceiling ratchet. Downloads the self-contained binary and runs it.
+branding:
+  icon: filter
+  color: red
+
+inputs:
+  args:
+    description: >
+      Arguments passed to slopslint, e.g. "check --classify --enforce" or
+      "ratchet ${{ github.event.pull_request.base.sha }}".
+    required: false
+    default: check --classify --enforce
+  version:
+    description: >
+      Release tag to download. Defaults to the tag this action was resolved
+      from, so pinning the action pins the binary.
+    required: false
+    default: ""
+  working-directory:
+    description: Directory to run in (the repository root holding .slop/).
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Install slopslint
+      shell: bash
+      env:
+        REQUESTED_VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        version="${REQUESTED_VERSION:-}"
+        if [ -z "$version" ]; then version="${ACTION_REF:-}"; fi
+        if [ -z "$version" ]; then
+          echo "slopslint: cannot determine the release to download; set the 'version' input" >&2
+          exit 1
+        fi
+
+        case "$(uname -s)" in
+          Darwin) os=darwin ;;
+          Linux)  os=linux ;;
+          *) echo "slopslint: unsupported runner OS $(uname -s)" >&2; exit 1 ;;
+        esac
+        case "$(uname -m)" in
+          arm64|aarch64) arch=arm64 ;;
+          x86_64|amd64)  arch=x64 ;;
+          *) echo "slopslint: unsupported runner architecture $(uname -m)" >&2; exit 1 ;;
+        esac
+
+        asset="slopslint-${os}-${arch}"
+        url="https://github.com/thellmwhisperer/slopslint/releases/download/${version}/${asset}"
+        echo "slopslint: downloading ${url}"
+        curl --fail --silent --show-error --location "$url" -o "${RUNNER_TEMP}/slopslint"
+        chmod +x "${RUNNER_TEMP}/slopslint"
+        echo "${RUNNER_TEMP}" >> "$GITHUB_PATH"
+
+    - name: Run slopslint
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: slopslint ${{ inputs.args }}
