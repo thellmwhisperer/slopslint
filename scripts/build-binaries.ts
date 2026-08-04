@@ -6,7 +6,7 @@
  * and no separately installed detector — the whole reason the detector became a
  * linked library rather than a pinned subprocess.
  */
-import { mkdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 /** Published targets. Each produces one self-contained executable. */
@@ -42,21 +42,28 @@ async function build(): Promise<void> {
     }
   }
 
+  // No --banner here: src/cli.ts already carries the shebang and bun preserves
+  // it, so adding one would emit a second `#!` on line 2, where node rejects it
+  // as a syntax error rather than treating it as an interpreter line.
   console.log("building the npm entry (node target)");
+  const npmEntry = join(DIST, "slopslint.mjs");
   const npmBuild = Bun.spawnSync([
     "bun",
     "build",
     "./src/cli.ts",
     "--target=node",
     "--outfile",
-    join(DIST, "slopslint.mjs"),
-    "--banner",
-    "#!/usr/bin/env node",
+    npmEntry,
   ]);
   if (npmBuild.exitCode !== 0) {
     console.error(new TextDecoder().decode(npmBuild.stderr));
     throw new Error("failed to build the npm entry");
   }
+  const built = await Bun.file(npmEntry).text();
+  if (!built.startsWith("#!")) {
+    throw new Error("the npm entry lost its shebang; npx would not be able to run it");
+  }
+  chmodSync(npmEntry, 0o755);
 }
 
 if (import.meta.main) {
