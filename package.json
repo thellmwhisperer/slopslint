@@ -1,0 +1,53 @@
+{
+  "name": "slopslint",
+  "version": "0.1.0",
+  "description": "Blocking slop gate for AI-assisted repos: duplication scopes, tombstone records, and a monotonic ceiling ratchet.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "slopslint": "dist/slopslint.mjs"
+  },
+  "main": "dist/slopslint.mjs",
+  "files": [
+    "dist/slopslint.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thellmwhisperer/slopslint.git"
+  },
+  "homepage": "https://github.com/thellmwhisperer/slopslint#readme",
+  "bugs": {
+    "url": "https://github.com/thellmwhisperer/slopslint/issues"
+  },
+  "keywords": [
+    "lint",
+    "duplication",
+    "jscpd",
+    "tombstone",
+    "ceiling",
+    "ratchet",
+    "agent",
+    "code-quality"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build:npm": "bun build ./src/cli.ts --target=node --outfile dist/slopslint.mjs --banner '#!/usr/bin/env node'",
+    "build:binaries": "bun run scripts/build-binaries.ts"
+  },
+  "dependencies": {
+    "@jscpd/core": "4.2.5",
+    "@jscpd/tokenizer": "4.2.5",
+    "fast-glob": "3.3.3",
+    "yaml": "2.8.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "5.9.3"
+  }
+}

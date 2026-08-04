@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (must already exist)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # Job-level so the optional-publish steps below can test it in `if:`.
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.5"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify the tag matches the manifest version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          manifest="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$manifest" ]; then
+            echo "tag $TAG does not match package.json $manifest" >&2
+            exit 1
+          fi
+
+      - name: Test before publishing
+        run: bun test
+
+      - name: Build every target
+        run: bun run build:binaries
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum slopslint-* > SHA256SUMS
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            dist/slopslint-darwin-arm64 \
+            dist/slopslint-darwin-x64 \
+            dist/slopslint-linux-arm64 \
+            dist/slopslint-linux-x64 \
+            dist/slopslint-windows-x64.exe \
+            dist/slopslint.mjs \
+            dist/SHA256SUMS
+
+      # npm is a convenience surface, not the gate's supply line: consumers run
+      # the binary. Publishing is skipped rather than failed when no token is
+      # configured, so a release is never blocked on an optional channel.
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          npm publish --provenance --access public
+
+      - name: Note the skipped npm publish
+        if: ${{ env.NPM_TOKEN == '' }}
+        run: echo "NPM_TOKEN is not configured; skipped the npm publish."

@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.5"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+  binaries:
+    # Proves the published artefact actually runs, not just that it links: the
+    # gate its consumers depend on is the binary, not the sources.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.5"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build every target
+        run: bun run build:binaries
+
+      - name: Smoke-test the native binary against a real tree
+        run: |
+          set -euo pipefail
+          ./dist/slopslint-linux-x64 --version
+
+          root="$(mktemp -d)"
+          mkdir -p "$root/.slop/tombstones" "$root/py"
+          cat > "$root/.slop/config.yml" <<'YAML'
+          schema: 1
+          detector: {name: jscpd, version: "4.2.5"}
+          defaults: {format: python, mode: mild, min_lines: 5, min_tokens: 50}
+          scopes:
+            production:
+              scan_path: py
+              pattern: "**/*.py"
+              ignore: ["**/test_*.py"]
+          YAML
+          printf 'schema: 1\nscopes:\n  production:\n    active_clones_ceiling: 1\n' \
+            > "$root/.slop/ceilings.yml"
+          for name in a b; do
+            cat > "$root/py/$name.py" <<'PY'
+          def compute_checksum(data):
+              result = 0
+              for byte in data:
+                  result = (result * 31 + byte) & 0xFFFFFFFF
+              return result
+
+
+          def normalize_path(path):
+              parts = path.split("/")
+              resolved = []
+              for part in parts:
+                  if part == "..":
+                      resolved.pop()
+                  elif part != ".":
+                      resolved.append(part)
+              return "/".join(resolved)
+          PY
+          done
+
+          ./dist/slopslint-linux-x64 check --classify --enforce --repo-root "$root"
+
+          # ...and the gate really blocks: a ceiling of zero must fail.
+          printf 'schema: 1\nscopes:\n  production:\n    active_clones_ceiling: 0\n' \
+            > "$root/.slop/ceilings.yml"
+          if ./dist/slopslint-linux-x64 check --classify --enforce --repo-root "$root"; then
+            echo "expected the gate to fail on a violated ceiling" >&2
+            exit 1
+          fi
+
+      - name: Smoke-test the npm entry
+        run: node ./dist/slopslint.mjs --version
