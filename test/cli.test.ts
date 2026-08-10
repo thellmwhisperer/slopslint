@@ -248,7 +248,7 @@ describe("tombstone", () => {
     );
     const result = run("tombstone", "check", "--repo-root", root);
     expect(result.code).toBe(0);
-    expect(result.out).toContain("1 record(s) valid");
+    expect(result.out).toBe("tombstone: 1 record(s) valid (1 duplication, 0 standing)");
   });
 
   test("check on an empty directory exits 2", () => {

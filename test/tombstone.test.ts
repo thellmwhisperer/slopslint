@@ -1,6 +1,23 @@
 /**
- * Tombstone contract: records consume findings, never produce them; every
- * malformed, ambiguous, duplicate, or path-escaping condition fails closed.
+ * @overview Tombstone validation and classification contract tests. ~460 lines, no public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at "load fails closed"    <- CORE adversarial schema matrix
+ *   2. Read "classification"           <- finding consumption semantics
+ *   3. Read "addTombstone"             <- scaffold behavior
+ *
+ *   MAIN FLOW
+ *   record fixture -> validate/load -> classify or reject -> optional scaffold
+ *
+ *   PUBLIC API
+ *   (none; test module)
+ *
+ *   INTERNALS
+ *   recordDir, withAlien
+ *
+ * @exports
+ * @deps bun:test, node:path, yaml, check, tombstone, helpers
  */
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -39,6 +56,8 @@ function recordDir(body: string, name: string): { dir: string; root: string } {
 function withAlien(id = "T-ALIEN-X"): { dir: string; root: string } {
   return recordDir(stringify(alienRecord(id)), `${id}.yml`);
 }
+
+// -- 1/6 CORE · load fails closed -- <- START HERE
 
 describe("load fails closed", () => {
   const mutations: [string, (record: Record<string, any>) => Record<string, any>, string][] = [
@@ -81,6 +100,11 @@ describe("load fails closed", () => {
       "standing record claiming clone_fingerprint",
       (r) => ({ ...r, match: { ...r["match"], family: "clone_fingerprint" } }),
       "clone_fingerprint",
+    ],
+    [
+      "standing record claiming orphan_fingerprint",
+      (r) => ({ ...r, match: { ...r["match"], family: "orphan_fingerprint" } }),
+      "orphan_fingerprint",
     ],
   ];
 
@@ -177,6 +201,10 @@ describe("load fails closed", () => {
   });
 });
 
+// -/ 1/6
+
+// -- 2/6 HELPER · load happy paths --
+
 describe("load happy paths", () => {
   test("an empty directory is a valid state", () => {
     expect(loadTombstones(tempTree())).toEqual([]);
@@ -224,6 +252,10 @@ describe("load happy paths", () => {
   });
 });
 
+// -/ 2/6
+
+// -- 3/6 HELPER · scope resolution --
+
 describe("scope resolution", () => {
   test("explicit scopes win", () => {
     expect([...resolveAllowedScopes(["a", "b"], undefined)].sort()).toEqual(["a", "b"]);
@@ -246,6 +278,10 @@ describe("scope resolution", () => {
     expect(loadTombstones(dir, { repoRoot: root }).map((r) => r.id)).toEqual(["T-ALIEN-X"]);
   });
 });
+
+// -/ 3/6
+
+// -- 4/6 HELPER · classification --
 
 describe("classification", () => {
   const duplicate = (fingerprint: string) => ({
@@ -320,6 +356,10 @@ describe("classification", () => {
   });
 });
 
+// -/ 4/6
+
+// -- 5/6 HELPER · classifyReport --
+
 describe("classifyReport", () => {
   test("annotates counts and carries every S1 field through", () => {
     const report = canonicalFixture("python_production", [fp(1), fp(2)]);
@@ -365,6 +405,10 @@ describe("classifyReport", () => {
     expect(classified.diagnostics!.unmatched_tombstones).toEqual([]);
   });
 });
+
+// -/ 5/6
+
+// -- 6/6 HELPER · addTombstone --
 
 describe("addTombstone", () => {
   test("scaffolds a standing record that loads back", () => {
@@ -417,4 +461,23 @@ describe("addTombstone", () => {
       }),
     ).toThrow(/requires --scope/);
   });
+
+  test("an orphan record must name a configured orphan scope", () => {
+    const root = tempTree();
+    write(join(root, ".slop", "config.yml"), configYaml());
+    expect(() =>
+      addTombstone(join(root, "tombs"), {
+        recordId: "T-ORPHAN",
+        status: "accepted",
+        category: "orphan",
+        title: "orphan",
+        family: "orphan_fingerprint",
+        scope: "typo",
+        fingerprint: fp(9),
+        repoRoot: root,
+      }),
+    ).toThrow(/no orphan scopes|unknown/);
+  });
 });
+
+// -/ 6/6

@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/thellmwhisperer/slopslint/blob/main/docs/check-output.schema.json",
+  "title": "slopslint check output",
+  "description": "Canonical output from slopslint check. The legacy array is retained when only duplication is configured; classified or opt-in checks use the object form.",
+  "oneOf": [
+    {
+      "type": "array",
+      "items": { "$ref": "#/$defs/duplicationScope" }
+    },
+    {
+      "type": "object",
+      "required": ["scopes"],
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/duplicationScope" }
+        },
+        "orphan_scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/orphanScope" }
+        },
+        "claims": { "$ref": "#/$defs/claimsReport" },
+        "diagnostics": {
+          "type": "object",
+          "required": ["unmatched_tombstones", "standing_tombstones"],
+          "properties": {
+            "unmatched_tombstones": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/unmatchedTombstone" }
+            },
+            "standing_tombstones": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "category"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "category": { "type": "string" },
+                  "family": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "statistics": {
+      "type": "object",
+      "required": [
+        "total_sources",
+        "total_lines",
+        "duplicated_lines",
+        "clones",
+        "duplicated_lines_ppm"
+      ],
+      "properties": {
+        "total_sources": { "type": "integer", "minimum": 1 },
+        "total_lines": { "type": "integer", "minimum": 1 },
+        "duplicated_lines": { "type": "integer", "minimum": 0 },
+        "clones": { "type": "integer", "minimum": 0 },
+        "duplicated_lines_ppm": { "type": "integer", "minimum": 0 },
+        "active_clones": { "type": "integer", "minimum": 0 },
+        "accepted_clones": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "unmatchedTombstone": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "scope": { "type": "string" },
+        "fingerprint": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "duplicationScope": {
+      "type": "object",
+      "required": ["scope", "sha256", "statistics", "clones"],
+      "properties": {
+        "scope": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "statistics": { "$ref": "#/$defs/statistics" },
+        "clones": { "type": "integer", "minimum": 0 },
+        "diagnostics": {
+          "type": "object",
+          "required": ["unmatched_tombstones"],
+          "properties": {
+            "unmatched_tombstones": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/unmatchedTombstone" }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "orphanEvidence": {
+      "type": "object",
+      "required": ["source", "reference", "reason"],
+      "properties": {
+        "source": { "type": "string" },
+        "reference": { "enum": ["import", "path", "symbol"] },
+        "reason": { "enum": ["self", "test", "generation"] }
+      },
+      "additionalProperties": false
+    },
+    "orphan": {
+      "type": "object",
+      "required": ["scope", "kind", "path", "fingerprint", "evidence"],
+      "properties": {
+        "scope": { "type": "string" },
+        "kind": { "enum": ["file", "directory", "exported_symbol"] },
+        "path": { "type": "string" },
+        "symbol": { "type": "string" },
+        "fingerprint": { "$ref": "#/$defs/sha256" },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/orphanEvidence" }
+        },
+        "status": { "enum": ["active", "accepted"] },
+        "tombstone": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "orphanScope": {
+      "type": "object",
+      "required": ["scope", "count", "orphans"],
+      "properties": {
+        "scope": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 },
+        "active_orphans": { "type": "integer", "minimum": 0 },
+        "accepted_orphans": { "type": "integer", "minimum": 0 },
+        "orphans": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/orphan" }
+        },
+        "diagnostics": {
+          "type": "object",
+          "required": ["unmatched_tombstones"],
+          "properties": {
+            "unmatched_tombstones": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/unmatchedTombstone" }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "contract": {
+      "type": "object",
+      "required": ["file", "item"],
+      "properties": {
+        "file": { "type": "string" },
+        "item": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "claimsReport": {
+      "type": "object",
+      "required": ["count", "surfaces"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "surfaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["scope", "kind", "surface", "contract"],
+            "properties": {
+              "scope": { "type": "string" },
+              "kind": { "enum": ["file", "directory", "exported_symbol"] },
+              "surface": { "type": "string" },
+              "contract": { "$ref": "#/$defs/contract" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

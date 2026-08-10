@@ -1,19 +1,32 @@
 /**
- * Engine identity and the detector library it links against.
+ * @overview Engine and linked-detector identity. ~30 lines, 3 public constants.
  *
- * The Python predecessor probed a pinned `jscpd` executable with `--version`
- * and refused to run on a mismatch, because the detector lived on the other
- * side of a process boundary and could be swapped underneath the gate. The
- * detector is now a linked library, so its identity is fixed at build time:
- * `DETECTOR_VERSION` is asserted against the manifest's pinned dependency by
- * `test/version.test.ts` instead of by a runtime subprocess probe.
+ *   READING GUIDE
+ *   -------------
+ *   1. Read VERSION and detector constants  <- complete module
+ *
+ *   MAIN FLOW
+ *   package manifest + linked dependency -> compile-time identity constants
+ *
+ *   PUBLIC API
+ *   VERSION, DETECTOR_NAME, DETECTOR_VERSION
+ *
+ *   INTERNALS
+ *   (none)
+ *
+ * @exports VERSION, DETECTOR_NAME, DETECTOR_VERSION
+ * @deps package.json contract asserted by test/version.test.ts
  */
 
+// -- 1/1 CORE · identity constants -- <- START HERE
+
 /** slopslint's own version. */
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 /** Detector name recorded in every canonical report. */
 export const DETECTOR_NAME = "jscpd";
 
 /** Version of the linked `@jscpd/*` detector libraries. */
 export const DETECTOR_VERSION = "4.2.5";
+
+// -/ 1/1

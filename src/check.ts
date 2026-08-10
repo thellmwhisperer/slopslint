@@ -1,11 +1,23 @@
 /**
- * `slopslint check` — run every configured scope and return a privacy-safe
- * summary.
+ * @overview `slopslint check` orchestrator. ~250 lines, 6 public symbols.
  *
- * Three layers, each strictly additive:
- *   * default: measure and report (the canonical S1 report and its identity);
- *   * `--classify`: apply tombstone records, splitting accepted from active;
- *   * `--enforce`: fail closed on ceiling violations and stale tombstones.
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at runCheck()            <- CORE all configured checks
+ *   2. classifyReport()               <- duplication tombstones
+ *   3. loadRecords/assertScopeParity  <- enforcement preparation
+ *
+ *   MAIN FLOW
+ *   config -> duplication + orphan census + claims -> classify -> enforce -> summary
+ *
+ *   PUBLIC API
+ *   runCheck(), classifyReport(), CheckOptions, ScopeSummary, ClassifiedSummary, ExtendedSummary
+ *
+ *   INTERNALS
+ *   loadRecords, assertScopeParity
+ *
+ * @exports runCheck, classifyReport, CheckOptions, ScopeSummary, ClassifiedSummary, ExtendedSummary
+ * @deps canonical, ceilings, claims, config, detector, errors, orphans, tombstone
  */
 import { join } from "node:path";
 import type { CanonicalReport, UnmatchedTombstone } from "./canonical.ts";
@@ -14,6 +26,13 @@ import { loadConfig } from "./config.ts";
 import { scanScope } from "./detector.ts";
 import { SlopslintError } from "./errors.ts";
 import { loadCeilings } from "./ceilings.ts";
+import { verifyClaims, type ClaimsReport } from "./claims.ts";
+import {
+  censusOrphans,
+  classifyOrphans,
+  enforceOrphanReport,
+  type OrphanReport,
+} from "./orphans.ts";
 import type { LoadOptions, Tombstone } from "./tombstone.ts";
 import {
   asUnmatched,
@@ -22,6 +41,8 @@ import {
   loadTombstones,
   standingTombstones,
 } from "./tombstone.ts";
+
+// -- 1/3 HELPER · summary types and classifyReport --
 
 /** Options for {@link runCheck}. */
 export interface CheckOptions {
@@ -44,10 +65,20 @@ export interface ScopeSummary {
 /** The `--classify` summary shape. */
 export interface ClassifiedSummary {
   scopes: ScopeSummary[];
+  orphan_scopes?: OrphanReport[];
+  claims?: ClaimsReport;
   diagnostics: {
     unmatched_tombstones: UnmatchedTombstone[];
     standing_tombstones: { id: string; category: string; family: string | undefined }[];
   };
+}
+
+/** Extended report shape emitted only when an opt-in detector is configured. */
+export interface ExtendedSummary {
+  scopes: ScopeSummary[];
+  orphan_scopes?: OrphanReport[];
+  claims?: ClaimsReport;
+  diagnostics?: ClassifiedSummary["diagnostics"];
 }
 
 /**
@@ -75,40 +106,58 @@ export function classifyReport(
   };
 }
 
-function loadRecords(options: CheckOptions, scopeNames: string[]): Tombstone[] {
+// -/ 1/3
+
+// -- 2/3 HELPER · records and scope parity --
+
+function loadRecords(
+  options: CheckOptions,
+  scopeNames: string[],
+  orphanScopeNames: string[],
+): Tombstone[] {
   const dir = options.tombstonesDir ?? join(options.repoRoot, ".slop", "tombstones");
   const loadOptions: LoadOptions = {
     repoRoot: options.repoRoot,
     allowedScopes: scopeNames,
+    allowedOrphanScopes: orphanScopeNames,
   };
   return loadTombstones(dir, loadOptions);
 }
 
-function assertScopeParity(configScopes: string[], ceilingScopes: string[]): void {
+function assertScopeParity(
+  configScopes: string[],
+  ceilingScopes: string[],
+  label = "ceilings",
+): void {
   const extra = ceilingScopes.filter((scope) => !configScopes.includes(scope)).sort();
   const missing = configScopes.filter((scope) => !ceilingScopes.includes(scope)).sort();
   if (extra.length > 0) {
     throw new SlopslintError(
-      `ceilings defines unknown scope(s) ${JSON.stringify(extra)} not in .slop/config.yml`,
+      `${label} defines unknown scope(s) ${JSON.stringify(extra)} not in .slop/config.yml`,
     );
   }
   if (missing.length > 0) {
     throw new SlopslintError(
-      `ceilings missing scope(s) ${JSON.stringify(missing)} present in .slop/config.yml`,
+      `${label} missing scope(s) ${JSON.stringify(missing)} present in .slop/config.yml`,
     );
   }
 }
 
+// -/ 2/3
+
+// -- 3/3 CORE · runCheck -- <- START HERE
+
 /** Run every configured scope; return the report-only or classified summary. */
-export function runCheck(options: CheckOptions): ScopeSummary[] | ClassifiedSummary {
+export function runCheck(options: CheckOptions): ScopeSummary[] | ClassifiedSummary | ExtendedSummary {
   if (options.enforce && !options.classify) {
     throw new SlopslintError("--enforce requires --classify");
   }
 
   const config = loadConfig(join(options.repoRoot, ".slop", "config.yml"));
   const scopeNames = Object.keys(config.scopes);
+  const orphanScopeNames = Object.keys(config.orphan_scopes ?? {});
 
-  const records = options.classify ? loadRecords(options, scopeNames) : [];
+  const records = options.classify ? loadRecords(options, scopeNames, orphanScopeNames) : [];
 
   let ceilingsPath: string | undefined;
   let ceilings: ReturnType<typeof loadCeilings> | undefined;
@@ -118,6 +167,11 @@ export function runCheck(options: CheckOptions): ScopeSummary[] | ClassifiedSumm
     // Scope parity: the ceiling config must cover exactly the detection
     // scopes, so no scope is silently left unenforced.
     assertScopeParity(scopeNames, Object.keys(ceilings.scopes));
+    assertScopeParity(
+      orphanScopeNames,
+      Object.keys(ceilings.orphan_scopes ?? {}),
+      "ceilings.orphan_scopes",
+    );
   }
 
   const summary: ScopeSummary[] = [];
@@ -151,12 +205,38 @@ export function runCheck(options: CheckOptions): ScopeSummary[] | ClassifiedSumm
     summary.push(entry);
   }
 
-  if (!options.classify) {
+  const orphanReports = Object.entries(config.orphan_scopes ?? {}).map(([scope, scopeConfig]) => {
+    const report = censusOrphans(options.repoRoot, scope, scopeConfig, config.global_ignore);
+    if (!options.classify) return report;
+    const classified = classifyOrphans(report, records);
+    if (options.enforce && ceilings) {
+      enforceOrphanReport(
+        classified,
+        ceilings.orphan_scopes![scope]!.active_orphans_ceiling,
+      );
+    }
+    return classified;
+  });
+  const claims = config.claims
+    ? verifyClaims(options.repoRoot, config.claims, config.global_ignore)
+    : undefined;
+
+  if (!options.classify && orphanReports.length === 0 && claims === undefined) {
     return summary;
+  }
+
+  if (!options.classify) {
+    return {
+      scopes: summary,
+      ...(orphanReports.length > 0 ? { orphan_scopes: orphanReports } : {}),
+      ...(claims ? { claims } : {}),
+    };
   }
 
   return {
     scopes: summary,
+    ...(orphanReports.length > 0 ? { orphan_scopes: orphanReports } : {}),
+    ...(claims ? { claims } : {}),
     diagnostics: {
       unmatched_tombstones: unmatched.sort((left, right) => {
         const key = (record: UnmatchedTombstone): string =>
@@ -171,3 +251,5 @@ export function runCheck(options: CheckOptions): ScopeSummary[] | ClassifiedSumm
     },
   };
 }
+
+// -/ 3/3
