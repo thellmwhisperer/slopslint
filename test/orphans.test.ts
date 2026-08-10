@@ -86,6 +86,14 @@ describe("reference classification", () => {
     write(join(root, "docs/usage.md"), "Load `src/used.ts` from the build manifest.\n");
     expect(censusOrphans(root, "production", scope, []).orphans).toEqual([]);
   });
+
+  test("a sibling directory with the target as a prefix is not a reference", () => {
+    const root = tempTree();
+    write(join(root, "tools/kept/index.ts"), "export const kept = true;\n");
+    write(join(root, "docs/notes.md"), "See tools/kept-other/index.ts instead.\n");
+    const directoryScope = { ...scope, files: [], directories: ["tools/kept"] };
+    expect(censusOrphans(root, "tools", directoryScope, []).orphans).toHaveLength(1);
+  });
 });
 
 
