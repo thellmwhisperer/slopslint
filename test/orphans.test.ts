@@ -1,28 +1,8 @@
-/**
- * @overview Orphan-census contract tests. ~130 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at "reference classification"  <- core detector contract
- *   2. Read "surface kinds"                  <- files, directories, exports
- *   3. Read "determinism"                    <- stable output guarantee
- *
- *   MAIN FLOW
- *   fixture tree -> censusOrphans -> evidence classification -> report
- *
- *   PUBLIC API
- *   (none; test module)
- *
- *   INTERNALS
- *   scope, target helpers
- *
- * @exports
- * @deps bun:test, node:path, ../src/orphans.ts, ./helpers.ts
- */
+// Orphan census contract tests.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { OrphanScopeConfig } from "../src/config.ts";
-import { censusOrphans } from "../src/orphans.ts";
+import { censusOrphans, enforceOrphanReport } from "../src/orphans.ts";
 import { tempTree, write } from "./helpers.ts";
 
 const scope: OrphanScopeConfig = {
@@ -34,7 +14,6 @@ const scope: OrphanScopeConfig = {
   ignore: [],
 };
 
-// -- 1/3 CORE · reference classification -- <- START HERE
 
 describe("reference classification", () => {
   test("a self-reference does not consume the file", () => {
@@ -93,11 +72,23 @@ describe("reference classification", () => {
     write(join(root, "app/main.cjs"), `const { used } = require("../src/used");\nvoid used;\n`);
     expect(censusOrphans(root, "production", scope, []).orphans).toEqual([]);
   });
+
+  test("a longer path with the target as a prefix is not a reference", () => {
+    const root = tempTree();
+    write(join(root, "src/lonely.ts"), "export const lonely = true;\n");
+    write(join(root, "docs/notes.md"), "Archived as src/lonely.ts.bak\n");
+    expect(censusOrphans(root, "production", scope, []).orphans).toHaveLength(1);
+  });
+
+  test("an exact path mention in documentation is a consumer", () => {
+    const root = tempTree();
+    write(join(root, "src/used.ts"), "export const used = true;\n");
+    write(join(root, "docs/usage.md"), "Load `src/used.ts` from the build manifest.\n");
+    expect(censusOrphans(root, "production", scope, []).orphans).toEqual([]);
+  });
 });
 
-// -/ 1/3
 
-// -- 2/3 HELPER · surface kinds --
 
 describe("surface kinds", () => {
   test("directories are consumed by references to descendants", () => {
@@ -130,11 +121,20 @@ describe("surface kinds", () => {
     expect(report.orphans.map((item) => item.symbol)).toEqual(["abandoned"]);
     expect(report.orphans[0]!.kind).toBe("exported_symbol");
   });
+
+  test("comments and strings do not declare exported symbols", () => {
+    const root = tempTree();
+    write(
+      join(root, "src/api.ts"),
+      `// export const removed = 1;\nconst note = "export function imaginary() {}";\nexport const real = 1;\n`,
+    );
+    write(join(root, "app/main.ts"), `import { real } from "../src/api.ts";\nvoid real;\n`);
+    const symbolScope = { ...scope, files: [], exported_symbols: ["src/**/*.ts"] };
+    expect(censusOrphans(root, "api", symbolScope, []).orphans).toEqual([]);
+  });
 });
 
-// -/ 2/3
 
-// -- 3/3 HELPER · determinism --
 
 test("the report is byte-stable across repeated runs", () => {
   const root = tempTree();
@@ -145,8 +145,25 @@ test("the report is byte-stable across repeated runs", () => {
   );
 });
 
+test("the orphan fingerprint formula is a committed contract", () => {
+  const root = tempTree();
+  write(join(root, "src/lonely.ts"), "export const lonely = true;\n");
+  const production = censusOrphans(root, "production", scope, []).orphans[0]!;
+  const anotherScope = censusOrphans(root, "another", scope, []).orphans[0]!;
+  expect(production.fingerprint).toBe(
+    "50f79cf09e58f49d857ee65d90e8b6b0a4583bdae1292d0d2ff70beab3f1aa0c",
+  );
+  expect(anotherScope.fingerprint).not.toBe(production.fingerprint);
+});
+
+test("enforcement rejects an unclassified orphan report", () => {
+  const root = tempTree();
+  write(join(root, "src/lonely.ts"), "export const lonely = true;\n");
+  expect(() => enforceOrphanReport(censusOrphans(root, "production", scope, []), 1)).toThrow(
+    /not classified/,
+  );
+});
+
 test("a configured surface glob that selects nothing fails closed", () => {
   expect(() => censusOrphans(tempTree(), "production", scope, [])).toThrow(/selected zero/);
 });
-
-// -/ 3/3

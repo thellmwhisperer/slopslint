@@ -1,24 +1,4 @@
-/**
- * @overview Tombstone validation and classification contract tests. ~460 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at "load fails closed"    <- CORE adversarial schema matrix
- *   2. Read "classification"           <- finding consumption semantics
- *   3. Read "addTombstone"             <- scaffold behavior
- *
- *   MAIN FLOW
- *   record fixture -> validate/load -> classify or reject -> optional scaffold
- *
- *   PUBLIC API
- *   (none; test module)
- *
- *   INTERNALS
- *   recordDir, withAlien
- *
- * @exports
- * @deps bun:test, node:path, yaml, check, tombstone, helpers
- */
+// Tombstone validation and classification contract tests.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { stringify } from "yaml";
@@ -57,7 +37,6 @@ function withAlien(id = "T-ALIEN-X"): { dir: string; root: string } {
   return recordDir(stringify(alienRecord(id)), `${id}.yml`);
 }
 
-// -- 1/6 CORE · load fails closed -- <- START HERE
 
 describe("load fails closed", () => {
   const mutations: [string, (record: Record<string, any>) => Record<string, any>, string][] = [
@@ -201,9 +180,7 @@ describe("load fails closed", () => {
   });
 });
 
-// -/ 1/6
 
-// -- 2/6 HELPER · load happy paths --
 
 describe("load happy paths", () => {
   test("an empty directory is a valid state", () => {
@@ -252,9 +229,7 @@ describe("load happy paths", () => {
   });
 });
 
-// -/ 2/6
 
-// -- 3/6 HELPER · scope resolution --
 
 describe("scope resolution", () => {
   test("explicit scopes win", () => {
@@ -279,9 +254,7 @@ describe("scope resolution", () => {
   });
 });
 
-// -/ 3/6
 
-// -- 4/6 HELPER · classification --
 
 describe("classification", () => {
   const duplicate = (fingerprint: string) => ({
@@ -356,9 +329,7 @@ describe("classification", () => {
   });
 });
 
-// -/ 4/6
 
-// -- 5/6 HELPER · classifyReport --
 
 describe("classifyReport", () => {
   test("annotates counts and carries every S1 field through", () => {
@@ -406,9 +377,7 @@ describe("classifyReport", () => {
   });
 });
 
-// -/ 5/6
 
-// -- 6/6 HELPER · addTombstone --
 
 describe("addTombstone", () => {
   test("scaffolds a standing record that loads back", () => {
@@ -464,7 +433,10 @@ describe("addTombstone", () => {
 
   test("an orphan record must name a configured orphan scope", () => {
     const root = tempTree();
-    write(join(root, ".slop", "config.yml"), configYaml());
+    write(
+      join(root, ".slop", "config.yml"),
+      configYaml(`orphan_scopes:\n  tools:\n    files: ["tools/**"]\n`),
+    );
     expect(() =>
       addTombstone(join(root, "tombs"), {
         recordId: "T-ORPHAN",
@@ -476,8 +448,6 @@ describe("addTombstone", () => {
         fingerprint: fp(9),
         repoRoot: root,
       }),
-    ).toThrow(/no orphan scopes|unknown/);
+    ).toThrow(/unknown/);
   });
 });
-
-// -/ 6/6

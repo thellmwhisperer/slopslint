@@ -1,28 +1,6 @@
-/**
- * @overview Mechanical public-surface claim synchronization. ~150 lines, 3 public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at verifyClaims()       <- CORE sync gate
- *   2. loadClaims()                  <- strict committed-map validation
- *   3. enumerate configured scopes   <- generic surface census
- *
- *   MAIN FLOW
- *   ClaimsConfig -> Surface[] + claims.yml -> file/item proof -> ClaimsReport
- *
- *   PUBLIC API
- *   verifyClaims()  Enforce exact surface-to-contract synchronization
- *   ClaimsReport    Deterministic verified mapping
- *   VerifiedClaim   One mechanically proven claim
- *
- *   INTERNALS
- *   loadClaims, validateClaim, repoRelative
- *
- * @exports verifyClaims, ClaimsReport, VerifiedClaim
- * @deps node:fs, node:path, config, errors, surfaces, yaml
- */
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+// Mechanical public-surface claim synchronization.
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import type { ClaimsConfig } from "./config.ts";
 import { ensureRepoRelative } from "./config.ts";
 import { SlopslintError, ensure } from "./errors.ts";
@@ -47,11 +25,33 @@ export interface ClaimsReport {
   surfaces: VerifiedClaim[];
 }
 
-function loadClaims(path: string): Record<string, ClaimEntry> {
+/** Resolve a declared file and reject symlinks that leave the repository. */
+function resolveRepoFile(repoRoot: string, path: string, missingMessage: string): string {
+  const requested = join(repoRoot, path);
+  ensure(existsSync(requested), missingMessage);
+  let root: string;
+  let resolved: string;
+  try {
+    root = realpathSync(repoRoot);
+    resolved = realpathSync(requested);
+  } catch (error) {
+    throw new SlopslintError(`cannot resolve repository file ${path}: ${String(error)}`);
+  }
+  const fromRoot = relative(root, resolved);
+  ensure(
+    fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot),
+    `repository file escapes the repository after symlink resolution: ${path}`,
+  );
+  return resolved;
+}
+
+function loadClaims(repoRoot: string, path: string): Record<string, ClaimEntry> {
   let parsed: unknown;
   try {
-    parsed = parseYamlStrict(readFileSync(path, "utf8"));
+    const resolved = resolveRepoFile(repoRoot, path, `claims file does not exist: ${path}`);
+    parsed = parseYamlStrict(readFileSync(resolved, "utf8"));
   } catch (error) {
+    if (error instanceof SlopslintError) throw error;
     const detail = error instanceof YamlError ? error.message : String(error);
     throw new SlopslintError(`claims file is missing or invalid YAML: ${detail}`);
   }
@@ -75,7 +75,6 @@ function loadClaims(path: string): Record<string, ClaimEntry> {
   return claims;
 }
 
-// -- 1/1 CORE · verifyClaims -- <- START HERE
 
 /** Verify every censused surface has a live contract file containing its opaque item. */
 export function verifyClaims(
@@ -83,7 +82,7 @@ export function verifyClaims(
   config: ClaimsConfig,
   globalIgnore: readonly string[] = [],
 ): ClaimsReport {
-  const claims = loadClaims(join(repoRoot, config.file));
+  const claims = loadClaims(repoRoot, config.file);
   const surfaces = Object.entries(config.surfaces)
     .flatMap(([scope, surfaceConfig]) =>
       enumerateSurfaces(repoRoot, scope, surfaceConfig, globalIgnore),
@@ -108,9 +107,9 @@ export function verifyClaims(
   for (const surface of surfaces) {
     const id = surfaceId(surface);
     const contract = claims[id]!.contract;
-    const contractPath = join(repoRoot, contract.file);
-    ensure(
-      existsSync(contractPath),
+    const contractPath = resolveRepoFile(
+      repoRoot,
+      contract.file,
       `claim ${id} contract file does not exist: ${contract.file}`,
     );
     let text: string;
@@ -132,5 +131,3 @@ export function verifyClaims(
   }
   return { count: verified.length, surfaces: verified };
 }
-
-// -/ 1/1

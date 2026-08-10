@@ -1,25 +1,4 @@
-/**
- * @overview Strict tombstone records and finding classification. ~570 lines, 20 public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at loadTombstones()      <- CORE committed-record boundary
- *   2. validateOne()/validateMatch()  <- schema and detector families
- *   3. classifyDuplicates()           <- duplication consumption
- *   4. addTombstone()                 <- safe scaffold writer
- *
- *   MAIN FLOW
- *   YAML records -> validate -> match detector fingerprints -> accepted/stale diagnostics
- *
- *   PUBLIC API
- *   schema constants, Tombstone, record predicates, validate/load/classify/add functions
- *
- *   INTERNALS
- *   scalar/path/incident/match validators
- *
- * @exports SCHEMA_VERSION, CATEGORIES, STATUSES, DUPLICATION_FAMILY, ORPHAN_FAMILY, NON_DUPLICATION_FAMILIES, ALL_FAMILIES, Tombstone, family, isDuplication, isOrphan, isStanding, validateOne, resolveAllowedScopes, LoadOptions, loadTombstones, ScopeClassification, classifyDuplicates, standingTombstones, asUnmatched, AddTombstoneOptions, addTombstone
- * @deps node:fs, node:path, yaml, canonical, config, errors, yaml helpers
- */
+// Strict tombstone records and finding classification.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { stringify } from "yaml";
@@ -28,7 +7,6 @@ import { loadConfig, readScopeNames } from "./config.ts";
 import { TombstoneConfigError, ensureRecord } from "./errors.ts";
 import { YamlError, isMapping, parseYamlStrict } from "./yaml.ts";
 
-// -- 1/5 HELPER · schema, types, and record predicates --
 
 /** Schema version every record must declare. */
 export const SCHEMA_VERSION = 1;
@@ -96,9 +74,7 @@ export function isStanding(record: Tombstone): boolean {
   return record.category !== "duplication" && record.category !== "orphan";
 }
 
-// -/ 1/5
 
-// -- 2/5 HELPER · record validators --
 
 function requireString(value: unknown, what: string): string {
   ensureRecord(
@@ -342,9 +318,7 @@ export function validateOne(
   };
 }
 
-// -/ 2/5
 
-// -- 3/5 CORE · scope resolution and loadTombstones -- <- START HERE
 
 /**
  * Scopes a duplication tombstone may name.
@@ -449,9 +423,7 @@ export function loadTombstones(tombstonesDir: string, options: LoadOptions = {})
   return records.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
 }
 
-// -/ 3/5
 
-// -- 4/5 HELPER · finding classification --
 
 /** Result of applying duplication tombstones to one scope. */
 export interface ScopeClassification {
@@ -518,9 +490,7 @@ export function asUnmatched(record: Tombstone): UnmatchedTombstone {
   };
 }
 
-// -/ 4/5
 
-// -- 5/5 HELPER · addTombstone --
 
 /** Fields accepted by {@link addTombstone}. */
 export interface AddTombstoneOptions {
@@ -570,7 +540,7 @@ export function addTombstone(tombstonesDir: string, options: AddTombstoneOptions
     ensureRecord(options.scope, `${options.category} tombstone requires --scope`);
     ensureRecord(options.fingerprint, `${options.category} tombstone requires --fingerprint`);
     match = {
-      family: options.category === "duplication" ? DUPLICATION_FAMILY : ORPHAN_FAMILY,
+      family: expectedFamily,
       scope: options.scope,
       fingerprint: options.fingerprint,
     };
@@ -619,5 +589,3 @@ export function addTombstone(tombstonesDir: string, options: AddTombstoneOptions
   loadTombstones(tombstonesDir, loadOptions);
   return out;
 }
-
-// -/ 5/5

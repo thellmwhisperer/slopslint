@@ -1,31 +1,9 @@
-/**
- * @overview Strict `.slop/config.yml` loader. ~280 lines, 9 public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at loadConfig()          <- CORE complete validation flow
- *   2. validateSurfaces()             <- orphan/claims glob contract
- *   3. readScopeNames()               <- tombstone scope discovery
- *
- *   MAIN FLOW
- *   YAML -> strict shape checks -> duplication + opt-in surface config
- *
- *   PUBLIC API
- *   loadConfig(), readScopeNames(), ensureRepoRelative(), configuration interfaces
- *
- *   INTERNALS
- *   validateIgnoreList, validateDefaults, validateScope, validateGlobList,
- *   validateSurfaces, validateOrphanScopes, validateClaims
- *
- * @exports ScanDefaults, ScopeConfig, SurfaceGlobs, OrphanScopeConfig, ClaimsConfig, SlopConfig, ensureRepoRelative, loadConfig, readScopeNames
- * @deps node:fs, errors, version, yaml
- */
+// Strict `.slop/config.yml` loading and validation.
 import { readFileSync } from "node:fs";
 import { SlopslintError, ensure } from "./errors.ts";
 import { DETECTOR_NAME, DETECTOR_VERSION } from "./version.ts";
 import { YamlError, isMapping, parseYamlStrict } from "./yaml.ts";
 
-// -- 1/4 HELPER · configuration types and path invariant --
 
 /** Detection parameters shared by every scope. */
 export interface ScanDefaults {
@@ -86,9 +64,7 @@ export function ensureRepoRelative(value: string, what: string): string {
   return value;
 }
 
-// -/ 1/4
 
-// -- 2/4 HELPER · shape validators --
 
 function validateIgnoreList(entries: unknown, what: string): string[] {
   ensure(Array.isArray(entries), `${what} must be a list`);
@@ -158,8 +134,21 @@ function validateGlobList(entries: unknown, what: string): string[] {
   return globs;
 }
 
-function validateSurfaces(name: string, raw: unknown): SurfaceGlobs {
+function validateSurfaces(
+  name: string,
+  raw: unknown,
+  extraAllowedKeys: readonly string[] = [],
+): SurfaceGlobs {
   ensure(isMapping(raw), `${name} must be a mapping`);
+  const allowedKeys = new Set([
+    "files",
+    "directories",
+    "exported_symbols",
+    "ignore",
+    ...extraAllowedKeys,
+  ]);
+  const unknownKeys = Object.keys(raw).filter((key) => !allowedKeys.has(key)).sort();
+  ensure(unknownKeys.length === 0, `${name} has unknown key(s): ${JSON.stringify(unknownKeys)}`);
   const result = {
     files: validateGlobList(raw["files"], `${name}.files`),
     directories: validateGlobList(raw["directories"], `${name}.directories`),
@@ -181,7 +170,11 @@ function validateOrphanScopes(raw: unknown): Record<string, OrphanScopeConfig> |
   ensure(isMapping(raw) && Object.keys(raw).length > 0, "orphan_scopes must be a non-empty mapping");
   const scopes: Record<string, OrphanScopeConfig> = {};
   for (const [name, value] of Object.entries(raw)) {
-    const surfaces = validateSurfaces(`orphan scope ${name}`, value);
+    const surfaces = validateSurfaces(
+      `orphan scope ${name}`,
+      value,
+      ["test_files", "generation_files"],
+    );
     const mapping = value as Record<string, unknown>;
     scopes[name] = {
       ...surfaces,
@@ -213,9 +206,7 @@ function validateClaims(raw: unknown): ClaimsConfig | undefined {
   return { file: file as string, surfaces };
 }
 
-// -/ 2/4
 
-// -- 3/4 CORE · loadConfig -- <- START HERE
 
 /**
  * Load and validate `.slop/config.yml`.
@@ -269,9 +260,7 @@ export function loadConfig(path: string): SlopConfig {
   };
 }
 
-// -/ 3/4
 
-// -- 4/4 HELPER · readScopeNames --
 
 /**
  * Scope names declared by a repository.
@@ -300,5 +289,3 @@ export function readScopeNames(configPath: string): string[] | undefined {
   const names = Object.keys(raw["scopes"]);
   return names.length > 0 ? names : undefined;
 }
-
-// -/ 4/4

@@ -1,31 +1,9 @@
-/**
- * @overview Committed clone/orphan ceilings and monotonic ratchet. ~225 lines, 7 public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at ratchet()             <- CORE base/head comparison
- *   2. loadCeilingsFromText()         <- strict schema validation
- *   3. getBaseText()                  <- git boundary and bootstrap
- *
- *   MAIN FLOW
- *   head/base YAML -> validate -> compare scope sets/counts -> pass or violation
- *
- *   PUBLIC API
- *   CEILINGS_PATH, loadCeilingsFromText(), loadCeilings(), getBaseText(), ratchet(),
- *   CeilingsConfig, RatchetResult
- *
- *   INTERNALS
- *   loadScopeCeilings, compareCeilings
- *
- * @exports CEILINGS_PATH, CeilingsConfig, loadCeilingsFromText, loadCeilings, getBaseText, RatchetResult, ratchet
- * @deps node:child_process, node:fs, errors, yaml
- */
+// Committed clone/orphan ceilings and monotonic ratchet.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { SlopslintError, ensure } from "./errors.ts";
 import { YamlError, isMapping, parseYamlStrict } from "./yaml.ts";
 
-// -- 1/3 HELPER · ceiling document validation --
 
 /** Path of the ceilings file, relative to the repository root. */
 export const CEILINGS_PATH = ".slop/ceilings.yml";
@@ -99,9 +77,7 @@ export function loadCeilings(path: string): CeilingsConfig {
   return loadCeilingsFromText(text, `head (${path})`);
 }
 
-// -/ 1/3
 
-// -- 2/3 HELPER · base-ref reading and comparison helpers --
 
 /**
  * Read the base ref's ceilings file through `git show`.
@@ -175,9 +151,7 @@ function compareCeilings(
   );
 }
 
-// -/ 2/3
 
-// -- 3/3 CORE · ratchet -- <- START HERE
 
 /**
  * Verify the committed ceilings only decrease against `baseRef`.
@@ -231,5 +205,3 @@ export function ratchet(baseRef: string, repoRoot: string): RatchetResult {
     summary: `Ceiling ratchet OK: base=${baseRef} ${parts.join(" ")}`,
   };
 }
-
-// -/ 3/3

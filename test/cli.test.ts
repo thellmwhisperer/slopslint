@@ -1,7 +1,4 @@
-/**
- * CLI and end-to-end check contract: exit codes, layered flags, scope parity,
- * and deterministic output on one immutable tree.
- */
+// CLI and end-to-end check contract: exit codes, flags, scope parity, and output.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { main } from "../src/cli.ts";
@@ -31,6 +28,29 @@ scopes:
   return root;
 }
 
+/** A valid orphan exemption used to exercise CLI scope resolution and summaries. */
+function orphanRecord(scope: string, fingerprint = "a".repeat(64)): string {
+  return `schema: 1
+id: T-ORPHAN
+status: accepted
+category: orphan
+title: accepted orphan
+created_at: 2026-08-10
+incident:
+  pattern: unconsumed surface
+  what_went_wrong: no production consumer
+  root_cause: intentionally retained
+  rule_established: record the exception
+  evidence:
+    - family: orphan_fingerprint
+      example: tools/orphan.ts
+match:
+  family: orphan_fingerprint
+  scope: ${scope}
+  fingerprint: ${fingerprint}
+`;
+}
+
 /** Capture a CLI run's exit code plus its stdout and stderr. */
 function run(...argv: string[]): { code: number; out: string; err: string } {
   const out: string[] = [];
@@ -42,6 +62,7 @@ function run(...argv: string[]): { code: number; out: string; err: string } {
   );
   return { code, out: out.join("\n"), err: err.join("\n") };
 }
+
 
 describe("top level", () => {
   test("--version prints the engine version", () => {
@@ -82,6 +103,8 @@ describe("top level", () => {
     expect(result.err).toContain("slopslint:");
   });
 });
+
+
 
 describe("check", () => {
   test("report-only emits one entry per scope", () => {
@@ -220,6 +243,8 @@ scopes:
   });
 });
 
+
+
 describe("tombstone", () => {
   test("list emits JSON rows", () => {
     const root = consumerRepo();
@@ -249,6 +274,29 @@ describe("tombstone", () => {
     const result = run("tombstone", "check", "--repo-root", root);
     expect(result.code).toBe(0);
     expect(result.out).toBe("tombstone: 1 record(s) valid (1 duplication, 0 standing)");
+  });
+
+  test("check summarizes configured orphan records", () => {
+    const root = consumerRepo();
+    write(
+      join(root, ".slop", "config.yml"),
+      configYaml(`orphan_scopes:\n  tools:\n    files: ["tools/**"]\n`),
+    );
+    write(join(root, ".slop", "tombstones", "T-ORPHAN.yml"), orphanRecord("tools"));
+    const result = run("tombstone", "check", "--repo-root", root);
+    expect(result.code).toBe(0);
+    expect(result.out).toBe(
+      "tombstone: 1 record(s) valid (0 duplication, 1 orphan, 0 standing)",
+    );
+  });
+
+  test("an orphan record without configured orphan scopes reports the config mismatch", () => {
+    const root = consumerRepo();
+    write(join(root, ".slop", "tombstones", "T-ORPHAN.yml"), orphanRecord("tools"));
+    const result = run("tombstone", "check", "--repo-root", root);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain("repository config declares no orphan scopes");
+    expect(result.err).not.toContain("allowedOrphanScopes must be non-empty");
   });
 
   test("check on an empty directory exits 2", () => {
@@ -317,6 +365,8 @@ describe("tombstone", () => {
     expect(run("tombstone", "frobnicate", "--repo-root", consumerRepo()).code).toBe(2);
   });
 });
+
+
 
 describe("ratchet usage", () => {
   test("no base ref exits 2", () => {

@@ -1,25 +1,5 @@
 #!/usr/bin/env node
-/**
- * @overview `slopslint` command-line adapter. ~310 lines, 1 public symbol.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at main()                <- CORE dispatch and exit codes
- *   2. commandCheck/commandRatchet    <- detector and ratchet adapters
- *   3. commandTombstone*              <- record management
- *
- *   MAIN FLOW
- *   argv -> parseArgs -> command adapter -> canonical stdout / classified stderr
- *
- *   PUBLIC API
- *   main()  Run the CLI without throwing expected gate or usage errors
- *
- *   INTERNALS
- *   parseArgs, resolveRoot, commandCheck, commandRatchet, commandTombstone*
- *
- * @exports main
- * @deps canonical, ceilings, check, config, errors, repo, tombstone, version
- */
+// Command-line adapter for checks, ratchets, and tombstone management.
 import { join } from "node:path";
 import { canonicalJson } from "./canonical.ts";
 import { ratchet } from "./ceilings.ts";
@@ -40,7 +20,6 @@ import {
 } from "./tombstone.ts";
 import { VERSION } from "./version.ts";
 
-// -- 1/4 HELPER · usage and argument parsing --
 
 const USAGE = `slopslint ${VERSION} - blocking slop gate: duplication, orphans, claims, tombstones, ratchets.
 
@@ -134,9 +113,7 @@ function tombstonesDir(args: ParsedArgs, root: string): string {
   return args.values.get("--tombstones") ?? join(root, ".slop", "tombstones");
 }
 
-// -/ 1/4
 
-// -- 2/4 HELPER · check and ratchet commands --
 
 function commandCheck(args: ParsedArgs, out: (line: string) => void): number {
   const options = {
@@ -165,16 +142,15 @@ function commandRatchet(args: ParsedArgs, out: (line: string) => void): number {
   return 0;
 }
 
-// -/ 2/4
 
-// -- 3/4 HELPER · tombstone commands --
 
 function loadOptionsFor(root: string): LoadOptions {
   const config = loadConfig(join(root, ".slop", "config.yml"));
+  const orphanScopeNames = Object.keys(config.orphan_scopes ?? {});
   return {
     repoRoot: root,
     allowedScopes: Object.keys(config.scopes),
-    allowedOrphanScopes: Object.keys(config.orphan_scopes ?? {}),
+    ...(orphanScopeNames.length > 0 ? { allowedOrphanScopes: orphanScopeNames } : {}),
   };
 }
 
@@ -237,6 +213,7 @@ function commandTombstoneAdd(args: ParsedArgs, out: (line: string) => void): num
     throw new UsageError(`--category must be one of ${JSON.stringify([...CATEGORIES])}`);
   }
   const config = loadConfig(join(root, ".slop", "config.yml"));
+  const orphanScopeNames = Object.keys(config.orphan_scopes ?? {});
   const options: AddTombstoneOptions = {
     recordId: required("--id"),
     status,
@@ -245,7 +222,7 @@ function commandTombstoneAdd(args: ParsedArgs, out: (line: string) => void): num
     family: required("--family"),
     repoRoot: root,
     allowedScopes: Object.keys(config.scopes),
-    allowedOrphanScopes: Object.keys(config.orphan_scopes ?? {}),
+    ...(orphanScopeNames.length > 0 ? { allowedOrphanScopes: orphanScopeNames } : {}),
   };
   for (const [flag, key] of [
     ["--artifact", "artifact"],
@@ -267,9 +244,7 @@ function commandTombstoneAdd(args: ParsedArgs, out: (line: string) => void): num
   return 0;
 }
 
-// -/ 3/4
 
-// -- 4/4 CORE · main -- <- START HERE
 
 /** Run the CLI. Returns the process exit code; never throws. */
 export function main(
@@ -327,5 +302,3 @@ export function main(
 if (import.meta.main) {
   process.exitCode = main(process.argv.slice(2));
 }
-
-// -/ 4/4

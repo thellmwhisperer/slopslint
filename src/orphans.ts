@@ -1,28 +1,4 @@
-/**
- * @overview Deterministic inbound-reference census. ~320 lines, 5 public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at censusOrphans()         <- CORE classification flow
- *   2. referencesFor()                  <- path/import/symbol evidence
- *   3. classifyReason()                 <- self/test/generation/consumer boundary
- *
- *   MAIN FLOW
- *   surfaces + repo text -> references -> ignored/consumer split -> orphan report
- *
- *   PUBLIC API
- *   censusOrphans()       Census one configured scope
- *   classifyOrphans()     Apply orphan tombstones
- *   enforceOrphanReport() Enforce count and stale-record invariants
- *   OrphanFinding         One orphan plus ignored inbound evidence
- *   OrphanReport          Canonical per-scope output
- *
- *   INTERNALS
- *   readSources, importSpecifiers, referencesPath, referencesSymbol, orphanFingerprint
- *
- * @exports censusOrphans, classifyOrphans, enforceOrphanReport, OrphanFinding, OrphanReport
- * @deps fast-glob, node:crypto, node:fs, node:path, config, errors, surfaces, tombstone
- */
+// Deterministic inbound-reference census for configured repository surfaces.
 import fastGlob from "fast-glob";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -59,6 +35,7 @@ export interface OrphanReport {
 interface TextSource {
   path: string;
   text: string;
+  specifiers: readonly string[];
 }
 
 function readSources(repoRoot: string, ignore: readonly string[]): TextSource[] {
@@ -76,7 +53,12 @@ function readSources(repoRoot: string, ignore: readonly string[]): TextSource[] 
     try {
       const bytes = readFileSync(`${repoRoot}/${path}`);
       if (!bytes.includes(0)) {
-        result.push({ path: path.replaceAll("\\", "/"), text: bytes.toString("utf8") });
+        const text = bytes.toString("utf8");
+        result.push({
+          path: path.replaceAll("\\", "/"),
+          text,
+          specifiers: importSpecifiers(text),
+        });
       }
     } catch {
       // Unreadable or non-text repository files cannot provide deterministic text evidence.
@@ -113,8 +95,20 @@ function moduleMatches(candidate: string, target: string): boolean {
   );
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasBoundedPathReference(text: string, target: string, directory: boolean): boolean {
+  const descendant = directory ? "(?:/[A-Za-z0-9_@+.-]+)*" : "";
+  return new RegExp(
+    `(?:^|[^A-Za-z0-9_./-])${escapeRegExp(target)}${descendant}(?=$|[^A-Za-z0-9_./-])`,
+    "m",
+  ).test(text);
+}
+
 function referencesPath(source: TextSource, surface: Surface): "import" | "path" | undefined {
-  for (const specifier of importSpecifiers(source.text)) {
+  for (const specifier of source.specifiers) {
     const candidate = resolveSpecifier(source.path, specifier);
     if (!candidate) continue;
     if (surface.kind === "directory") {
@@ -123,13 +117,13 @@ function referencesPath(source: TextSource, surface: Surface): "import" | "path"
       return "import";
     }
   }
-  if (source.text.includes(surface.path)) return "path";
-  if (surface.kind === "directory" && source.text.includes(`${surface.path}/`)) return "path";
+  if (hasBoundedPathReference(source.text, surface.path, surface.kind === "directory")) return "path";
   return undefined;
 }
 
 function referencesSymbol(source: TextSource, surface: Surface): boolean {
   const symbol = surface.symbol!;
+  const escapedSymbol = escapeRegExp(symbol);
   for (const match of source.text.matchAll(/\b(?:import|export)\s*\{([^}]+)\}\s*from\s*["'`]([^"'`]+)["'`]/g)) {
     const candidate = resolveSpecifier(source.path, match[2]!);
     if (!candidate || !moduleMatches(candidate, surface.path)) continue;
@@ -155,14 +149,14 @@ function referencesSymbol(source: TextSource, surface: Surface): boolean {
     const candidate = resolveSpecifier(source.path, match[2]!);
     if (candidate && moduleMatches(candidate, surface.path)) {
       const namespace = match[1]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      if (new RegExp(`\\b${namespace}\\.${symbol}\\b`).test(source.text)) return true;
+      if (new RegExp(`\\b${namespace}\\.${escapedSymbol}\\b`).test(source.text)) return true;
     }
   }
   for (const match of source.text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g)) {
     const candidate = resolveSpecifier(source.path, match[2]!);
     if (candidate && moduleMatches(candidate, surface.path)) {
       const namespace = match[1]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      if (new RegExp(`\\b${namespace}\\.${symbol}\\b`).test(source.text)) return true;
+      if (new RegExp(`\\b${namespace}\\.${escapedSymbol}\\b`).test(source.text)) return true;
     }
   }
   return false;
@@ -231,7 +225,6 @@ function referencesFor(
   return { ignored, consumed };
 }
 
-// -- 1/3 CORE · censusOrphans -- <- START HERE
 
 /** Census one scope and return only surfaces without a genuine external consumer. */
 export function censusOrphans(
@@ -258,21 +251,25 @@ export function censusOrphans(
   return { scope, count: orphans.length, orphans };
 }
 
-// -/ 1/3
 
-// -- 2/3 HELPER · classifyOrphans --
 
 /** Apply `orphan_fingerprint` tombstones to one census report. */
 export function classifyOrphans(report: OrphanReport, tombstones: readonly Tombstone[]): OrphanReport {
   const matching = tombstones.filter(
     (record) => record.category === "orphan" && record.match["scope"] === report.scope,
   );
-  const byFingerprint = new Map(matching.map((record) => [record.match["fingerprint"], record.id]));
+  const byFingerprint = new Map(
+    matching.map((record) => [String(record.match["fingerprint"]), record.id]),
+  );
   const seen = new Set<string>();
   const orphans = report.orphans.map((orphan) => {
     const id = byFingerprint.get(orphan.fingerprint);
-    if (id) seen.add(orphan.fingerprint);
-    return { ...orphan, status: id ? "accepted" as const : "active" as const, tombstone: id ?? null };
+    if (id !== undefined) seen.add(orphan.fingerprint);
+    return {
+      ...orphan,
+      status: id !== undefined ? "accepted" as const : "active" as const,
+      tombstone: id ?? null,
+    };
   });
   const unmatched = matching
     .filter((record) => !seen.has(String(record.match["fingerprint"])))
@@ -290,12 +287,15 @@ export function classifyOrphans(report: OrphanReport, tombstones: readonly Tombs
   };
 }
 
-// -/ 2/3
 
-// -- 3/3 HELPER · enforceOrphanReport --
 
 /** Enforce the committed active-orphan count and reject stale exemptions. */
 export function enforceOrphanReport(report: OrphanReport, ceiling: number): void {
+  if (report.active_orphans === undefined) {
+    throw new SlopslintError(
+      `Slopslint enforcement FAILED: ${report.scope} orphan report is not classified.`,
+    );
+  }
   const stale = report.diagnostics?.unmatched_tombstones ?? [];
   if (stale.length > 0) {
     throw new SlopslintError(
@@ -303,7 +303,7 @@ export function enforceOrphanReport(report: OrphanReport, ceiling: number): void
         `${JSON.stringify(stale.map((item) => item.id).sort())}.`,
     );
   }
-  const active = report.active_orphans ?? report.count;
+  const active = report.active_orphans;
   if (active > ceiling) {
     throw new SlopslintError(
       `Slopslint enforcement FAILED: ${report.scope} has ${active} active orphans, exceeding the ` +
@@ -318,5 +318,3 @@ export function enforceOrphanReport(report: OrphanReport, ceiling: number): void
     );
   }
 }
-
-// -/ 3/3
