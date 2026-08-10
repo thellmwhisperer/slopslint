@@ -1,17 +1,31 @@
 /**
- * `.slop/ceilings.yml` — the committed active-clone ceiling per scope, and the
- * ratchet that keeps it monotonic.
+ * @overview Committed clone/orphan ceilings and monotonic ratchet. ~225 lines, 7 public symbols.
  *
- * Two independent checks share this file. `enforceReport` (in `canonical.ts`)
- * compares MEASURED clones against the committed ceiling. The ratchet here
- * compares the COMMITTED ceiling against a git base ref, so a change can lower
- * it but never raise it. Both fail closed: a malformed or unreachable ceiling
- * is never treated as "no ceiling".
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at ratchet()             <- CORE base/head comparison
+ *   2. loadCeilingsFromText()         <- strict schema validation
+ *   3. getBaseText()                  <- git boundary and bootstrap
+ *
+ *   MAIN FLOW
+ *   head/base YAML -> validate -> compare scope sets/counts -> pass or violation
+ *
+ *   PUBLIC API
+ *   CEILINGS_PATH, loadCeilingsFromText(), loadCeilings(), getBaseText(), ratchet(),
+ *   CeilingsConfig, RatchetResult
+ *
+ *   INTERNALS
+ *   loadScopeCeilings, compareCeilings
+ *
+ * @exports CEILINGS_PATH, CeilingsConfig, loadCeilingsFromText, loadCeilings, getBaseText, RatchetResult, ratchet
+ * @deps node:child_process, node:fs, errors, yaml
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { SlopslintError, ensure } from "./errors.ts";
 import { YamlError, isMapping, parseYamlStrict } from "./yaml.ts";
+
+// -- 1/3 HELPER · ceiling document validation --
 
 /** Path of the ceilings file, relative to the repository root. */
 export const CEILINGS_PATH = ".slop/ceilings.yml";
@@ -20,6 +34,32 @@ export const CEILINGS_PATH = ".slop/ceilings.yml";
 export interface CeilingsConfig {
   schema: 1;
   scopes: Record<string, { active_clones_ceiling: number }>;
+  orphan_scopes?: Record<string, { active_orphans_ceiling: number }>;
+}
+
+function loadScopeCeilings(
+  raw: unknown,
+  what: string,
+  key: "active_clones_ceiling" | "active_orphans_ceiling",
+  required: boolean,
+): Record<string, Record<typeof key, number>> | undefined {
+  if (raw === undefined && !required) return undefined;
+  ensure(
+    isMapping(raw) && Object.keys(raw).length > 0,
+    `${what}: missing or empty ${key === "active_clones_ceiling" ? "scopes" : "orphan_scopes"}`,
+  );
+  const result: Record<string, Record<typeof key, number>> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    ensure(isMapping(value), `${what}: scope ${name} must be a mapping`);
+    const ceiling = value[key];
+    ensure(
+      typeof ceiling === "number" && Number.isInteger(ceiling) && ceiling >= 0,
+      `${what}: scope ${name} ${key} must be a non-negative integer ` +
+        `(got ${typeof ceiling} ${JSON.stringify(ceiling ?? null)})`,
+    );
+    result[name] = { [key]: ceiling } as Record<typeof key, number>;
+  }
+  return result;
 }
 
 /** Parse and validate a ceilings document from text. */
@@ -33,29 +73,19 @@ export function loadCeilingsFromText(raw: string, what: string): CeilingsConfig 
   }
   ensure(isMapping(parsed), `${what} must be a mapping`);
   ensure(parsed["schema"] === 1, `${what}: schema must be 1`);
-  const scopesRaw = parsed["scopes"];
-  ensure(
-    isMapping(scopesRaw) && Object.keys(scopesRaw).length > 0,
-    `${what}: missing or empty scopes`,
-  );
-
-  const scopes: Record<string, { active_clones_ceiling: number }> = {};
-  for (const [name, value] of Object.entries(scopesRaw)) {
-    ensure(isMapping(value), `${what}: scope ${name} must be a mapping`);
-    const ceiling = value["active_clones_ceiling"];
-    ensure(
-      typeof ceiling === "number" && Number.isInteger(ceiling),
-      `${what}: scope ${name} active_clones_ceiling must be a non-negative ` +
-        `integer (got ${typeof ceiling} ${JSON.stringify(ceiling ?? null)})`,
-    );
-    ensure(
-      ceiling >= 0,
-      `${what}: scope ${name} active_clones_ceiling must be a non-negative ` +
-        `integer (got ${ceiling})`,
-    );
-    scopes[name] = { active_clones_ceiling: ceiling };
-  }
-  return { schema: 1, scopes };
+  const scopes = loadScopeCeilings(
+    parsed["scopes"],
+    what,
+    "active_clones_ceiling",
+    true,
+  ) as Record<string, { active_clones_ceiling: number }>;
+  const orphanScopes = loadScopeCeilings(
+    parsed["orphan_scopes"],
+    what,
+    "active_orphans_ceiling",
+    false,
+  ) as Record<string, { active_orphans_ceiling: number }> | undefined;
+  return { schema: 1, scopes, ...(orphanScopes ? { orphan_scopes: orphanScopes } : {}) };
 }
 
 /** Load and validate the ceilings file at `path`. */
@@ -68,6 +98,10 @@ export function loadCeilings(path: string): CeilingsConfig {
   }
   return loadCeilingsFromText(text, `head (${path})`);
 }
+
+// -/ 1/3
+
+// -- 2/3 HELPER · base-ref reading and comparison helpers --
 
 /**
  * Read the base ref's ceilings file through `git show`.
@@ -105,6 +139,46 @@ export interface RatchetResult {
   summary: string;
 }
 
+function compareCeilings(
+  label: string,
+  key: "active_clones_ceiling" | "active_orphans_ceiling",
+  headRaw: Record<string, Record<string, number>> | undefined,
+  baseRaw: Record<string, Record<string, number>> | undefined,
+  violations: string[],
+  decreases: string[],
+  allowIntroduction = false,
+): string[] {
+  const head = headRaw ?? {};
+  const base = baseRaw ?? {};
+  const headNames = Object.keys(head).sort();
+  const baseNames = Object.keys(base).sort();
+  if (allowIntroduction && baseRaw === undefined && headRaw !== undefined) {
+    return headNames.map((scope) => `orphan_scopes.${scope}=${head[scope]![key]}`);
+  }
+  const mismatchLabel = label === "duplication" ? "scope mismatch" : "orphan scope mismatch";
+  ensure(
+    JSON.stringify(headNames) === JSON.stringify(baseNames),
+    `${mismatchLabel}: head has ${JSON.stringify(headNames)}, ` +
+      `base has ${JSON.stringify(baseNames)}`,
+  );
+  for (const scope of headNames) {
+    const headValue = head[scope]![key]!;
+    const baseValue = base[scope]![key]!;
+    const prefix = label === "duplication" ? scope : `orphan_scopes.${scope}`;
+    if (headValue > baseValue) violations.push(`  ${prefix}: ${baseValue} -> ${headValue} (INCREASE)`);
+    else if (headValue < baseValue) decreases.push(`  ${prefix}: ${baseValue} -> ${headValue} (decrease - OK)`);
+  }
+  return headNames.map((scope) =>
+    label === "duplication"
+      ? `${scope}=${head[scope]![key]}`
+      : `orphan_scopes.${scope}=${head[scope]![key]}`,
+  );
+}
+
+// -/ 2/3
+
+// -- 3/3 CORE · ratchet -- <- START HERE
+
 /**
  * Verify the committed ceilings only decrease against `baseRef`.
  *
@@ -128,25 +202,20 @@ export function ratchet(baseRef: string, repoRoot: string): RatchetResult {
   const base = loadCeilingsFromText(baseText, `base (${baseRef})`);
   const head = loadCeilings(`${repoRoot}/${CEILINGS_PATH}`);
 
-  const headScopes = Object.keys(head.scopes).sort();
-  const baseScopes = Object.keys(base.scopes).sort();
-  ensure(
-    JSON.stringify(headScopes) === JSON.stringify(baseScopes),
-    `scope mismatch: head has ${JSON.stringify(headScopes)}, ` +
-      `base has ${JSON.stringify(baseScopes)}`,
-  );
-
   const violations: string[] = [];
   const decreases: string[] = [];
-  for (const scope of headScopes) {
-    const headValue = head.scopes[scope]!.active_clones_ceiling;
-    const baseValue = base.scopes[scope]!.active_clones_ceiling;
-    if (headValue > baseValue) {
-      violations.push(`  ${scope}: ${baseValue} -> ${headValue} (INCREASE)`);
-    } else if (headValue < baseValue) {
-      decreases.push(`  ${scope}: ${baseValue} -> ${headValue} (decrease - OK)`);
-    }
-  }
+  const parts = [
+    ...compareCeilings("duplication", "active_clones_ceiling", head.scopes, base.scopes, violations, decreases),
+    ...compareCeilings(
+      "orphans",
+      "active_orphans_ceiling",
+      head.orphan_scopes,
+      base.orphan_scopes,
+      violations,
+      decreases,
+      true,
+    ),
+  ];
 
   if (violations.length > 0) {
     throw new SlopslintError(
@@ -156,12 +225,11 @@ export function ratchet(baseRef: string, repoRoot: string): RatchetResult {
     );
   }
 
-  const parts = headScopes
-    .map((scope) => `${scope}=${head.scopes[scope]!.active_clones_ceiling}`)
-    .join(" ");
   return {
     bootstrap: false,
     decreases,
-    summary: `Ceiling ratchet OK: base=${baseRef} ${parts}`,
+    summary: `Ceiling ratchet OK: base=${baseRef} ${parts.join(" ")}`,
   };
 }
+
+// -/ 3/3

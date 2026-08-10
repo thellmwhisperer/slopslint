@@ -1,7 +1,7 @@
 name: slopslint
 description: >
-  Blocking slop gate: duplication scopes, tombstone records, and a monotonic
-  ceiling ratchet. Downloads the self-contained binary and runs it.
+  Deterministic gate for duplication, orphan surfaces, claims, tombstones, and
+  monotonic ceilings. Downloads the self-contained binary and runs it.
 branding:
   icon: filter
   color: red

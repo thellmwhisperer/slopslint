@@ -1,9 +1,12 @@
 # slopslint
 
-A blocking slop gate for repositories where a lot of the code is written by
-agents. It measures duplication in independent scopes, lets you accept specific
-debt as a permanent reviewable record, and holds the total under a committed
-ceiling that can only ever go down.
+A deterministic slop gate for repositories where a lot of the code is written
+by agents. It asks two independent questions: **is this repeated?** and **who
+uses this?** Duplication and orphan findings are measured in configured scopes,
+specific debt can be accepted as a permanent reviewable tombstone, and each
+total is held under a committed ceiling that can only ever go down. An optional
+claims map also proves that every declared public surface is tied to a live
+contract item.
 
 One self-contained binary. No runtime, no package manager, no separately
 installed detector.
@@ -17,10 +20,14 @@ slopslint check --classify --enforce
 Agent-written code duplicates. Not dramatically, and rarely in a way any single
 review catches: a helper re-derived in a second module, a setup block pasted
 into a fourth test, a rejection path written four times with one word changed.
-Each instance is defensible. The aggregate is not.
+Each instance is defensible. The aggregate is not. Agent-written repositories
+also accumulate plausible-looking surfaces that nobody owns: for example, a
+generated copy whose only inbound references are its generator and its own guard
+test. A duplication-only gate cannot see that directory because nothing inside
+it needs to be repeated.
 
 A percentage threshold does not hold that line, because it drifts up quietly as
-the repository grows. slopslint holds an absolute count per scope, and the
+the repository grows. slopslint holds absolute counts per scope, and each
 committed count is monotonic: a change may lower it, never raise it. Debt you
 decide to keep is not silently subtracted — it is written down as a tombstone
 that names the incident, the rule it established, and the evidence.
@@ -40,7 +47,7 @@ Published for `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, and
 **GitHub Action:**
 
 ```yaml
-- uses: thellmwhisperer/slopslint@v0.1.0
+- uses: thellmwhisperer/slopslint@v0.2.0
   with:
     args: check --classify --enforce
 ```
@@ -53,7 +60,8 @@ npx slopslint check --classify --enforce
 
 ## Configure
 
-Two files under `.slop/`, both yours to own and commit.
+The base duplication setup uses two files under `.slop/`, both yours to own and
+commit. Orphan and claims checks are off unless their blocks are present.
 
 `.slop/config.yml` declares what to measure. Scope names, paths, and globs are
 your data — slopslint ships no default layout.
@@ -86,12 +94,45 @@ scopes:
   python_tests_fixtures:
     scan_path: py
     pattern: "**/{test_*,conftest}.py"
+
+# Optional. Every list is repository-relative and uses fast-glob syntax.
+orphan_scopes:
+  tools:
+    files: ["tools/**/*.{ts,js}"]
+    directories: ["skills/*"]
+    exported_symbols: ["src/**/*.{ts,js}"]
+    test_files: ["test/**/*.{ts,js}"]
+    generation_files: ["scripts/generate*.{ts,js}"]
+    ignore: ["**/fixtures/**"]
+
+# Optional. Surface groups are labels, not language-specific concepts.
+claims:
+  file: .slop/claims.yml
+  surfaces:
+    commands:
+      files: ["bin/*"]
+    tools:
+      directories: ["tools/*"]
+    assets:
+      files: ["assets/**/*"]
+    api:
+      exported_symbols: ["src/index.ts"]
 ```
 
 Scopes are measured independently and never leak into each other, so
 duplication in production code cannot hide inside the test scope. Globs match
 basenames: a directory named `test_data/` keeps its production files in the
 production scope.
+
+An orphan scope enumerates exactly the configured files, directories, and
+JavaScript/TypeScript exports. The census then searches repository text for
+deterministic inbound evidence: static or dynamic imports, `require` calls,
+repository-relative path strings (including build files, CI, and docs), and
+embed/generate directives that name the path. A surface is an orphan when it
+has no inbound consumer outside itself, configured test files, or configured
+generation files. Those ignored references are included in the report with
+their reason. slopslint does not execute code, inspect runtime telemetry, or ask
+a model to infer ownership.
 
 `.slop/ceilings.yml` declares what you will tolerate:
 
@@ -102,18 +143,47 @@ scopes:
     active_clones_ceiling: 21
   python_tests_fixtures:
     active_clones_ceiling: 110
+orphan_scopes:
+  tools:
+    active_orphans_ceiling: 3
 ```
 
 The ceiling is not a budget to spend. `check --enforce` fails when the measured
 count is **above** it (a regression) *and* when it is **below** it (an
-improvement you did not record). Paying debt down means lowering the number in
-the same change, so the base branch always states the truth.
+improvement you did not record). The same rule applies to
+`active_orphans_ceiling`. Paying debt down means lowering the number in the same
+change, so the base branch always states the truth.
+
+### Claims
+
+When `claims` is configured, its committed YAML file maps each censused surface to a
+contract file and an opaque item string:
+
+```yaml
+schema: 1
+claims:
+  bin/slopslint:
+    contract:
+      file: docs/contracts.md
+      item: CLI-SLOPSLINT
+  src/index.ts#runCheck:
+    contract:
+      file: docs/contracts.md
+      item: API-RUN-CHECK
+```
+
+File and directory identities are their repository-relative paths. Exported
+symbol identities are `path#symbol`. The check fails when a censused surface is
+missing, a claim names a surface outside the census, the referenced contract
+file is absent, or that file no longer contains the item string. slopslint does
+not interpret the item or parse a contract language; choosing the relationship
+is an ordinary human- or agent-authored commit.
 
 ## Commands
 
 | Command | What it does | Exit |
 | --- | --- | --- |
-| `slopslint check` | measure every scope, print the canonical report | `0` |
+| `slopslint check` | run every configured census and claims sync; print canonical JSON | `0` |
 | `slopslint check --classify` | additionally split accepted from active | `0` |
 | `slopslint check --classify --enforce` | additionally fail on ceiling violations and stale records | `0` / `1` |
 | `slopslint ratchet <base-ref>` | verify the committed ceilings only went down | `0` / `1` |
@@ -130,7 +200,7 @@ CONSUMES a finding; it never produces one.
 schema: 1
 id: T-SHARED-FIXTURE-HEADER
 status: accepted            # accepted | legacy
-category: duplication       # duplication | alien_code | debt_normalization
+category: duplication       # duplication | orphan | alien_code | debt_normalization
 title: "Fixture header shared by the ingest suites"
 created_at: 2026-08-04
 incident:
@@ -151,8 +221,10 @@ match:
   fingerprint: <64 hex chars from `slopslint check`>
 ```
 
-Accepted clones stop counting as active, so the ceiling measures live debt
-only. Two rules keep that honest:
+Accepted clones and orphans stop counting as active, so ceilings measure live
+debt only. Orphans use the same record shape with `category: orphan`,
+`family: orphan_fingerprint`, `scope`, and the finding's SHA-256 fingerprint.
+Two rules keep that honest:
 
 * a record whose fingerprint matches nothing is **stale** and fails the gate —
   debt you paid off cannot leave its exemption behind;
@@ -160,17 +232,62 @@ only. Two rules keep that honest:
   **standing** records: validated, reported, never matched, never stale. They
   carry the incident now and reserve the schema path for a detector later.
 
+## Check output
+
+With only duplication configured, output remains the original array (or the
+original classified object), byte for byte. Configuring orphans or claims emits
+an object with the existing `scopes` plus opt-in keys:
+
+```json
+{
+  "scopes": [],
+  "orphan_scopes": [
+    {
+      "scope": "tools",
+      "count": 1,
+      "orphans": [
+        {
+          "scope": "tools",
+          "kind": "file",
+          "path": "tools/generated.ts",
+          "fingerprint": "<64 lowercase hex characters>",
+          "evidence": [
+            {"source": "test/generated.test.ts", "reference": "import", "reason": "test"},
+            {"source": "scripts/generate.ts", "reference": "path", "reason": "generation"}
+          ]
+        }
+      ]
+    }
+  ],
+  "claims": {
+    "count": 1,
+    "surfaces": [
+      {
+        "scope": "commands",
+        "kind": "file",
+        "surface": "bin/slopslint",
+        "contract": {"file": "docs/contracts.md", "item": "CLI-SLOPSLINT"}
+      }
+    ]
+  }
+}
+```
+
+The normative JSON Schema is
+[`docs/check-output.schema.json`](docs/check-output.schema.json).
+
 ## What fails closed
 
 The gate refuses to pass rather than guess. Missing or invalid config, a
 detector version that disagrees with the linked library, zero scanned files, a
 clone path that escapes the repository, a range that runs backwards, a
 duplicated or ambiguous YAML key, a tombstone citing a file that does not
-exist, two records claiming one clone, a ceiling scope that no detection scope
-declares, an unreachable git base ref — each is an error, never a silent pass.
+exist, two records claiming one finding, a missing claim, a stale contract item,
+an orphan ceiling scope mismatch, or an unreachable git base ref — each is an
+error, never a silent pass.
 
 Output carries integer totals, repository-relative paths, and a synthetic
-fingerprint per clone. It never carries source text, timestamps, floating
+fingerprint per clone or orphan. It never carries source text, timestamps, floating
 percentages, or absolute paths, so a report is safe to paste into an issue. Two
 runs over one unchanged tree produce byte-identical output.
 

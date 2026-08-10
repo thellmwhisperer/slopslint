@@ -1,7 +1,7 @@
 {
   "name": "slopslint",
-  "version": "0.1.0",
-  "description": "Blocking slop gate for AI-assisted repos: duplication scopes, tombstone records, and a monotonic ceiling ratchet.",
+  "version": "0.2.0",
+  "description": "Deterministic repository gate for duplication, orphan surfaces, contract claims, tombstones, and monotonic ceilings.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -10,6 +10,7 @@
   "main": "dist/slopslint.mjs",
   "files": [
     "dist/slopslint.mjs",
+    "docs/check-output.schema.json",
     "README.md",
     "LICENSE"
   ],
@@ -24,6 +25,8 @@
   "keywords": [
     "lint",
     "duplication",
+    "orphans",
+    "dead-code",
     "jscpd",
     "tombstone",
     "ceiling",

@@ -1,6 +1,23 @@
 /**
- * Ceiling ratchet contract: the committed ceiling may only go DOWN, and every
- * unreadable, malformed, or unreachable base fails closed.
+ * @overview Ceiling parser and ratchet contract tests. ~190 lines, no public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at "ratchet"                  <- CORE monotonic behavior
+ *   2. Read "loadCeilingsFromText"         <- schema boundary
+ *   3. Read "loadCeilings"                 <- filesystem boundary
+ *
+ *   MAIN FLOW
+ *   base/head ceiling YAML -> parse -> compare -> pass or fail closed
+ *
+ *   PUBLIC API
+ *   (none; test module)
+ *
+ *   INTERNALS
+ *   ceilingsYaml, git, gitRepo
+ *
+ * @exports
+ * @deps bun:test, node:child_process, node:path, ceilings, helpers
  */
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -37,6 +54,8 @@ function gitRepo(body = ceilingsYaml()): string {
   return repo;
 }
 
+// -- 1/3 HELPER · loadCeilingsFromText --
+
 describe("loadCeilingsFromText", () => {
   test("loads a valid document", () => {
     const config = loadCeilingsFromText(ceilingsYaml(), "test");
@@ -49,6 +68,14 @@ describe("loadCeilingsFromText", () => {
       loadCeilingsFromText(ceilingsYaml(0), "test").scopes["python_production"]!
         .active_clones_ceiling,
     ).toBe(0);
+  });
+
+  test("loads opt-in orphan ceilings", () => {
+    const config = loadCeilingsFromText(
+      `${ceilingsYaml()}orphan_scopes:\n  tools: {active_orphans_ceiling: 2}\n`,
+      "test",
+    );
+    expect(config.orphan_scopes?.["tools"]?.active_orphans_ceiling).toBe(2);
   });
 
   test.each([
@@ -69,11 +96,19 @@ describe("loadCeilingsFromText", () => {
   });
 });
 
+// -/ 1/3
+
+// -- 2/3 HELPER · loadCeilings --
+
 describe("loadCeilings", () => {
   test("a missing file fails closed", () => {
     expect(() => loadCeilings(join(tempTree(), "nope.yml"))).toThrow(/ceilings/);
   });
 });
+
+// -/ 2/3
+
+// -- 3/3 CORE · ratchet -- <- START HERE
 
 describe("ratchet", () => {
   test.each([
@@ -97,7 +132,9 @@ describe("ratchet", () => {
     write(join(repo, ".slop", "ceilings.yml"), ceilingsYaml(30, 132));
     const result = ratchet("HEAD", repo);
     expect(result.decreases.join("\n")).toContain("python_production: 36 -> 30");
-    expect(result.summary).toContain("Ceiling ratchet OK");
+    expect(result.summary).toBe(
+      "Ceiling ratchet OK: base=HEAD python_production=30 python_tests_fixtures=132",
+    );
   });
 
   test("an unreachable ref fails closed", () => {
@@ -144,4 +181,25 @@ describe("ratchet", () => {
     write(join(repo, ".slop", "ceilings.yml"), "schema: 1\nscopes:\n  x: str\n");
     expect(() => ratchet("HEAD", repo)).toThrow(/mapping/);
   });
+
+  test("an orphan ceiling increase is rejected", () => {
+    const base = `${ceilingsYaml()}orphan_scopes:\n  tools: {active_orphans_ceiling: 1}\n`;
+    const repo = gitRepo(base);
+    write(
+      join(repo, ".slop", "ceilings.yml"),
+      `${ceilingsYaml()}orphan_scopes:\n  tools: {active_orphans_ceiling: 2}\n`,
+    );
+    expect(() => ratchet("HEAD", repo)).toThrow(/orphan_scopes\.tools.*INCREASE/);
+  });
+
+  test("the first orphan ceiling block bootstraps against an existing file", () => {
+    const repo = gitRepo();
+    write(
+      join(repo, ".slop", "ceilings.yml"),
+      `${ceilingsYaml()}orphan_scopes:\n  tools: {active_orphans_ceiling: 2}\n`,
+    );
+    expect(() => ratchet("HEAD", repo)).not.toThrow();
+  });
 });
+
+// -/ 3/3

@@ -1,4 +1,24 @@
-/** `.slop/config.yml` loading: every malformed shape fails closed. */
+/**
+ * @overview Configuration loader contract tests. ~240 lines, no public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at "valid config"             <- supported schema
+ *   2. Read "malformed config fails closed" <- rejection matrix
+ *   3. Read "readScopeNames"                <- lightweight lookup
+ *
+ *   MAIN FLOW
+ *   fixture YAML -> loadConfig/readScopeNames -> validated value or failure
+ *
+ *   PUBLIC API
+ *   (none; test module)
+ *
+ *   INTERNALS
+ *   configAt
+ *
+ * @exports
+ * @deps bun:test, node:path, config, version, helpers
+ */
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { loadConfig, readScopeNames } from "../src/config.ts";
@@ -8,6 +28,8 @@ import { configYaml, tempTree, write } from "./helpers.ts";
 function configAt(body: string): string {
   return write(join(tempTree(), "config.yml"), body);
 }
+
+// -- 1/3 CORE · valid config -- <- START HERE
 
 describe("valid config", () => {
   test("loads scopes, defaults, and the pinned detector", () => {
@@ -44,7 +66,37 @@ describe("valid config", () => {
     );
     expect(config.scopes["python_tests_fixtures"]!.ignore).toEqual(["**/{gen,vendor}/**"]);
   });
+
+  test("orphan and claims checks are opt-in generic surfaces", () => {
+    const config = loadConfig(
+      configAt(configYaml(`orphan_scopes:
+  tools:
+    files: ["tools/**/*"]
+    directories: ["skills/*"]
+    exported_symbols: ["src/**/*.ts"]
+    test_files: ["test/**"]
+    generation_files: ["scripts/generate*.*"]
+claims:
+  file: .slop/claims.yml
+  surfaces:
+    commands:
+      files: ["bin/*"]
+`)),
+    );
+    expect(config.orphan_scopes?.["tools"]?.directories).toEqual(["skills/*"]);
+    expect(config.claims?.surfaces["commands"]?.files).toEqual(["bin/*"]);
+  });
+
+  test("existing config leaves both new checks disabled", () => {
+    const config = loadConfig(configAt(configYaml()));
+    expect(config.orphan_scopes).toBeUndefined();
+    expect(config.claims).toBeUndefined();
+  });
 });
+
+// -/ 1/3
+
+// -- 2/3 HELPER · malformed config fails closed --
 
 describe("malformed config fails closed", () => {
   const cases: [string, string, string][] = [
@@ -181,6 +233,10 @@ scopes: {}
   });
 });
 
+// -/ 2/3
+
+// -- 3/3 HELPER · readScopeNames --
+
 describe("readScopeNames", () => {
   test("returns the declared scopes", () => {
     expect(readScopeNames(configAt(configYaml()))?.sort()).toEqual([
@@ -197,3 +253,5 @@ describe("readScopeNames", () => {
     expect(() => readScopeNames(configAt("a: 1\na: 2\n"))).toThrow(/cannot read scopes/);
   });
 });
+
+// -/ 3/3

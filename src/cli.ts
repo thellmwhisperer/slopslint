@@ -1,14 +1,30 @@
 #!/usr/bin/env node
 /**
- * `slopslint` command line: check / ratchet / tombstone.
+ * @overview `slopslint` command-line adapter. ~310 lines, 1 public symbol.
  *
- * Exit codes are part of the contract: 0 pass, 1 a fail-closed gate condition,
- * 2 an invalid tombstone record or invalid usage.
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at main()                <- CORE dispatch and exit codes
+ *   2. commandCheck/commandRatchet    <- detector and ratchet adapters
+ *   3. commandTombstone*              <- record management
+ *
+ *   MAIN FLOW
+ *   argv -> parseArgs -> command adapter -> canonical stdout / classified stderr
+ *
+ *   PUBLIC API
+ *   main()  Run the CLI without throwing expected gate or usage errors
+ *
+ *   INTERNALS
+ *   parseArgs, resolveRoot, commandCheck, commandRatchet, commandTombstone*
+ *
+ * @exports main
+ * @deps canonical, ceilings, check, config, errors, repo, tombstone, version
  */
 import { join } from "node:path";
 import { canonicalJson } from "./canonical.ts";
 import { ratchet } from "./ceilings.ts";
 import { runCheck } from "./check.ts";
+import { loadConfig } from "./config.ts";
 import { SlopslintError, TombstoneConfigError } from "./errors.ts";
 import { findRepoRoot } from "./repo.ts";
 import type { AddTombstoneOptions, LoadOptions } from "./tombstone.ts";
@@ -18,12 +34,15 @@ import {
   addTombstone,
   family,
   isDuplication,
+  isOrphan,
   isStanding,
   loadTombstones,
 } from "./tombstone.ts";
 import { VERSION } from "./version.ts";
 
-const USAGE = `slopslint ${VERSION} - blocking slop gate: duplication scopes, tombstones, ceiling ratchet.
+// -- 1/4 HELPER · usage and argument parsing --
+
+const USAGE = `slopslint ${VERSION} - blocking slop gate: duplication, orphans, claims, tombstones, ratchets.
 
 usage:
   slopslint check [--classify] [--enforce] [--tombstones DIR] [--ceilings FILE]
@@ -40,7 +59,7 @@ global:
   --help            print this message
 
 commands:
-  check       run the duplication scan; --classify applies tombstone records,
+  check       run every configured detector and claims sync; --classify applies tombstones,
               --enforce fails closed on ceiling violations and stale records
   ratchet     verify committed ceilings only decrease against a git base ref
   tombstone   list, validate, or scaffold .slop/tombstones records
@@ -115,6 +134,10 @@ function tombstonesDir(args: ParsedArgs, root: string): string {
   return args.values.get("--tombstones") ?? join(root, ".slop", "tombstones");
 }
 
+// -/ 1/4
+
+// -- 2/4 HELPER · check and ratchet commands --
+
 function commandCheck(args: ParsedArgs, out: (line: string) => void): number {
   const options = {
     repoRoot: resolveRoot(args),
@@ -142,8 +165,17 @@ function commandRatchet(args: ParsedArgs, out: (line: string) => void): number {
   return 0;
 }
 
+// -/ 2/4
+
+// -- 3/4 HELPER · tombstone commands --
+
 function loadOptionsFor(root: string): LoadOptions {
-  return { repoRoot: root };
+  const config = loadConfig(join(root, ".slop", "config.yml"));
+  return {
+    repoRoot: root,
+    allowedScopes: Object.keys(config.scopes),
+    allowedOrphanScopes: Object.keys(config.orphan_scopes ?? {}),
+  };
 }
 
 function commandTombstoneList(args: ParsedArgs, out: (line: string) => void): number {
@@ -175,10 +207,14 @@ function commandTombstoneCheck(
     return 2;
   }
   const duplication = records.filter(isDuplication).length;
+  const orphans = records.filter(isOrphan).length;
   const standing = records.filter(isStanding).length;
+  const detail =
+    orphans === 0
+      ? `${duplication} duplication, ${standing} standing`
+      : `${duplication} duplication, ${orphans} orphan, ${standing} standing`;
   out(
-    `tombstone: ${records.length} record(s) valid ` +
-      `(${duplication} duplication, ${standing} standing)`,
+    `tombstone: ${records.length} record(s) valid (${detail})`,
   );
   return 0;
 }
@@ -200,6 +236,7 @@ function commandTombstoneAdd(args: ParsedArgs, out: (line: string) => void): num
   if (!(CATEGORIES as readonly string[]).includes(category)) {
     throw new UsageError(`--category must be one of ${JSON.stringify([...CATEGORIES])}`);
   }
+  const config = loadConfig(join(root, ".slop", "config.yml"));
   const options: AddTombstoneOptions = {
     recordId: required("--id"),
     status,
@@ -207,6 +244,8 @@ function commandTombstoneAdd(args: ParsedArgs, out: (line: string) => void): num
     title: required("--title"),
     family: required("--family"),
     repoRoot: root,
+    allowedScopes: Object.keys(config.scopes),
+    allowedOrphanScopes: Object.keys(config.orphan_scopes ?? {}),
   };
   for (const [flag, key] of [
     ["--artifact", "artifact"],
@@ -227,6 +266,10 @@ function commandTombstoneAdd(args: ParsedArgs, out: (line: string) => void): num
   out(`tombstone: wrote ${addTombstone(tombstonesDir(args, root), options)}`);
   return 0;
 }
+
+// -/ 3/4
+
+// -- 4/4 CORE · main -- <- START HERE
 
 /** Run the CLI. Returns the process exit code; never throws. */
 export function main(
@@ -284,3 +327,5 @@ export function main(
 if (import.meta.main) {
   process.exitCode = main(process.argv.slice(2));
 }
+
+// -/ 4/4
