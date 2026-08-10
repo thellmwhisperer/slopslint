@@ -7,6 +7,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   output shape when they are not configured.
 - Use the scripts in `package.json` for the authoritative test, typecheck, and
   build commands.
+- Do not add ceremonial file headers or numbered reading-guide markers; a
+  file-level comment must be at most one line.
 
 ## Maintaining this file
 

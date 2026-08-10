@@ -1,24 +1,4 @@
-/**
- * @overview `slopslint check` orchestrator. ~250 lines, 6 public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at runCheck()            <- CORE all configured checks
- *   2. classifyReport()               <- duplication tombstones
- *   3. loadRecords/assertScopeParity  <- enforcement preparation
- *
- *   MAIN FLOW
- *   config -> duplication + orphan census + claims -> classify -> enforce -> summary
- *
- *   PUBLIC API
- *   runCheck(), classifyReport(), CheckOptions, ScopeSummary, ClassifiedSummary, ExtendedSummary
- *
- *   INTERNALS
- *   loadRecords, assertScopeParity
- *
- * @exports runCheck, classifyReport, CheckOptions, ScopeSummary, ClassifiedSummary, ExtendedSummary
- * @deps canonical, ceilings, claims, config, detector, errors, orphans, tombstone
- */
+// Orchestrates every configured `slopslint check` detector and gate.
 import { join } from "node:path";
 import type { CanonicalReport, UnmatchedTombstone } from "./canonical.ts";
 import { canonicalSha256, canonicalizeReport, enforceReport } from "./canonical.ts";
@@ -42,7 +22,6 @@ import {
   standingTombstones,
 } from "./tombstone.ts";
 
-// -- 1/3 HELPER · summary types and classifyReport --
 
 /** Options for {@link runCheck}. */
 export interface CheckOptions {
@@ -106,9 +85,7 @@ export function classifyReport(
   };
 }
 
-// -/ 1/3
 
-// -- 2/3 HELPER · records and scope parity --
 
 function loadRecords(
   options: CheckOptions,
@@ -119,7 +96,7 @@ function loadRecords(
   const loadOptions: LoadOptions = {
     repoRoot: options.repoRoot,
     allowedScopes: scopeNames,
-    allowedOrphanScopes: orphanScopeNames,
+    ...(orphanScopeNames.length > 0 ? { allowedOrphanScopes: orphanScopeNames } : {}),
   };
   return loadTombstones(dir, loadOptions);
 }
@@ -143,12 +120,10 @@ function assertScopeParity(
   }
 }
 
-// -/ 2/3
 
-// -- 3/3 CORE · runCheck -- <- START HERE
 
 /** Run every configured scope; return the report-only or classified summary. */
-export function runCheck(options: CheckOptions): ScopeSummary[] | ClassifiedSummary | ExtendedSummary {
+export function runCheck(options: CheckOptions): ScopeSummary[] | ExtendedSummary {
   if (options.enforce && !options.classify) {
     throw new SlopslintError("--enforce requires --classify");
   }
@@ -251,5 +226,3 @@ export function runCheck(options: CheckOptions): ScopeSummary[] | ClassifiedSumm
     },
   };
 }
-
-// -/ 3/3

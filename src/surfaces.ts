@@ -1,26 +1,4 @@
-/**
- * @overview Deterministic generic surface enumeration. ~140 lines, 3 public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at enumerateSurfaces()       <- CORE census entry
- *   2. exportedSymbols()                  <- JS/TS export discovery
- *   3. select()                           <- sorted fail-closed glob expansion
- *
- *   MAIN FLOW
- *   SurfaceGlobs -> fast-glob -> export parsing -> sorted Surface[]
- *
- *   PUBLIC API
- *   enumerateSurfaces()  Enumerate files, directories, and exported symbols
- *   surfaceId()          Stable committed identity for one surface
- *   Surface              Canonical surface record
- *
- *   INTERNALS
- *   select, exportedSymbols, compareSurface
- *
- * @exports enumerateSurfaces, surfaceId, Surface
- * @deps fast-glob, node:fs, SurfaceGlobs, errors
- */
+// Deterministic enumeration of configured files, directories, and exported symbols.
 import fastGlob from "fast-glob";
 import { readFileSync } from "node:fs";
 import type { SurfaceGlobs } from "./config.ts";
@@ -64,14 +42,66 @@ function select(
     .sort();
 }
 
+/** Mask comments and string literals while preserving source layout for lexical export scans. */
+function maskCommentsAndStrings(text: string): string {
+  type State = "code" | "line" | "block" | "single" | "double" | "template";
+  let state: State = "code";
+  let result = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!;
+    const next = text[index + 1];
+    if (state === "code") {
+      if (character === "/" && next === "/") {
+        result += "  ";
+        state = "line";
+        index += 1;
+      } else if (character === "/" && next === "*") {
+        result += "  ";
+        state = "block";
+        index += 1;
+      } else if (character === "'" || character === '"' || character === "`") {
+        result += " ";
+        state = character === "'" ? "single" : character === '"' ? "double" : "template";
+      } else {
+        result += character;
+      }
+      continue;
+    }
+    if (character === "\n") {
+      result += "\n";
+      if (state === "line") state = "code";
+      continue;
+    }
+    if (state === "block" && character === "*" && next === "/") {
+      result += "  ";
+      state = "code";
+      index += 1;
+      continue;
+    }
+    if (character === "\\" && state !== "line" && state !== "block" && next !== undefined) {
+      result += next === "\n" ? " \n" : "  ";
+      index += 1;
+      continue;
+    }
+    const closes =
+      (state === "single" && character === "'") ||
+      (state === "double" && character === '"') ||
+      (state === "template" && character === "`");
+    result += " ";
+    if (closes) state = "code";
+  }
+  return result;
+}
+
 function exportedSymbols(text: string): string[] {
+  const code = maskCommentsAndStrings(text);
   const names = new Set<string>();
   const declarations =
     /\bexport\s+(?:declare\s+)?(?:async\s+)?(?:const|let|var|function|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
-  for (const match of text.matchAll(declarations)) names.add(match[1]!);
+  for (const match of code.matchAll(declarations)) names.add(match[1]!);
 
   const lists = /\bexport\s*\{([^}]+)\}/g;
-  for (const match of text.matchAll(lists)) {
+  for (const match of code.matchAll(lists)) {
     for (const item of match[1]!.split(",")) {
       const clean = item.trim().replace(/^type\s+/, "");
       if (!clean) continue;
@@ -80,8 +110,8 @@ function exportedSymbols(text: string): string[] {
       if (name && /^[A-Za-z_$][\w$]*$/.test(name)) names.add(name);
     }
   }
-  if (/\bexport\s+default\b/.test(text)) names.add("default");
-  for (const match of text.matchAll(/\b(?:exports|module\.exports)\.([A-Za-z_$][\w$]*)\s*=/g)) {
+  if (/\bexport\s+default\b/.test(code)) names.add("default");
+  for (const match of code.matchAll(/\b(?:exports|module\.exports)\.([A-Za-z_$][\w$]*)\s*=/g)) {
     names.add(match[1]!);
   }
   return [...names].sort();
@@ -93,7 +123,6 @@ function compareSurface(left: Surface, right: Surface): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-// -- 1/1 CORE · enumerateSurfaces -- <- START HERE
 
 /** Enumerate configured surfaces, rejecting unreadable symbol source files. */
 export function enumerateSurfaces(
@@ -137,5 +166,3 @@ export function enumerateSurfaces(
   }
   return result.sort(compareSurface);
 }
-
-// -/ 1/1

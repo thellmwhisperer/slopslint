@@ -1,24 +1,6 @@
-/**
- * @overview Claims-sync contract tests. ~100 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at "sync failures"      <- fail-closed contract
- *   2. Read "valid claims"           <- successful census mapping
- *
- *   MAIN FLOW
- *   configured surfaces -> claims.yml -> contract evidence -> verified report
- *
- *   PUBLIC API
- *   (none; test module)
- *
- *   INTERNALS
- *   config, claims helper
- *
- * @exports
- * @deps bun:test, node:path, ../src/claims.ts, ./helpers.ts
- */
+// Claims synchronization contract tests.
 import { describe, expect, test } from "bun:test";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { ClaimsConfig } from "../src/config.ts";
 import { verifyClaims } from "../src/claims.ts";
@@ -40,7 +22,6 @@ function claims(root: string, body: string): void {
   write(join(root, ".slop/claims.yml"), body);
 }
 
-// -- 1/2 CORE · sync failures -- <- START HERE
 
 describe("claims sync failures", () => {
   test("a surface glob that selects nothing fails closed", () => {
@@ -95,11 +76,33 @@ claims:
     );
     expect(() => verifyClaims(root, config)).toThrow(/uncensused.*bin\/removed/i);
   });
+
+  test("a contract symlink cannot escape the repository", () => {
+    const root = tempTree();
+    const outside = tempTree();
+    write(join(root, "bin/slopslint"), "#!/bin/sh\n");
+    const outsideContract = write(join(outside, "contract.md"), "CLI-001: secret\n");
+    write(join(root, "docs/.keep"), "");
+    symlinkSync(outsideContract, join(root, "docs/contracts.md"));
+    claims(
+      root,
+      `schema: 1\nclaims:\n  bin/slopslint:\n    contract: {file: docs/contracts.md, item: CLI-001}\n`,
+    );
+    expect(() => verifyClaims(root, config)).toThrow(/escapes the repository/i);
+  });
+
+  test("the claims map itself cannot be an escaping symlink", () => {
+    const root = tempTree();
+    const outside = tempTree();
+    write(join(root, "bin/slopslint"), "#!/bin/sh\n");
+    write(join(root, ".slop/.keep"), "");
+    const outsideClaims = write(join(outside, "claims.yml"), "schema: 1\nclaims: {}\n");
+    symlinkSync(outsideClaims, join(root, ".slop/claims.yml"));
+    expect(() => verifyClaims(root, config)).toThrow(/escapes the repository/i);
+  });
 });
 
-// -/ 1/2
 
-// -- 2/2 HELPER · valid claims --
 
 test("valid claims return a deterministic surface-to-contract report", () => {
   const root = tempTree();
@@ -122,5 +125,3 @@ test("valid claims return a deterministic surface-to-contract report", () => {
     ],
   });
 });
-
-// -/ 2/2

@@ -132,6 +132,14 @@
         "status": { "enum": ["active", "accepted"] },
         "tombstone": { "type": ["string", "null"] }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "exported_symbol" } }
+          },
+          "then": { "required": ["symbol"] }
+        }
+      ],
       "additionalProperties": false
     },
     "orphanScope": {

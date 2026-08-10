@@ -1,24 +1,4 @@
-/**
- * @overview Ceiling parser and ratchet contract tests. ~190 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at "ratchet"                  <- CORE monotonic behavior
- *   2. Read "loadCeilingsFromText"         <- schema boundary
- *   3. Read "loadCeilings"                 <- filesystem boundary
- *
- *   MAIN FLOW
- *   base/head ceiling YAML -> parse -> compare -> pass or fail closed
- *
- *   PUBLIC API
- *   (none; test module)
- *
- *   INTERNALS
- *   ceilingsYaml, git, gitRepo
- *
- * @exports
- * @deps bun:test, node:child_process, node:path, ceilings, helpers
- */
+// Ceiling parser and ratchet contract tests.
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -54,7 +34,6 @@ function gitRepo(body = ceilingsYaml()): string {
   return repo;
 }
 
-// -- 1/3 HELPER · loadCeilingsFromText --
 
 describe("loadCeilingsFromText", () => {
   test("loads a valid document", () => {
@@ -96,9 +75,7 @@ describe("loadCeilingsFromText", () => {
   });
 });
 
-// -/ 1/3
 
-// -- 2/3 HELPER · loadCeilings --
 
 describe("loadCeilings", () => {
   test("a missing file fails closed", () => {
@@ -106,9 +83,7 @@ describe("loadCeilings", () => {
   });
 });
 
-// -/ 2/3
 
-// -- 3/3 CORE · ratchet -- <- START HERE
 
 describe("ratchet", () => {
   test.each([
@@ -201,5 +176,3 @@ describe("ratchet", () => {
     expect(() => ratchet("HEAD", repo)).not.toThrow();
   });
 });
-
-// -/ 3/3

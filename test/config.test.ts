@@ -1,24 +1,4 @@
-/**
- * @overview Configuration loader contract tests. ~240 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at "valid config"             <- supported schema
- *   2. Read "malformed config fails closed" <- rejection matrix
- *   3. Read "readScopeNames"                <- lightweight lookup
- *
- *   MAIN FLOW
- *   fixture YAML -> loadConfig/readScopeNames -> validated value or failure
- *
- *   PUBLIC API
- *   (none; test module)
- *
- *   INTERNALS
- *   configAt
- *
- * @exports
- * @deps bun:test, node:path, config, version, helpers
- */
+// Configuration loader contract tests.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { loadConfig, readScopeNames } from "../src/config.ts";
@@ -29,7 +9,6 @@ function configAt(body: string): string {
   return write(join(tempTree(), "config.yml"), body);
 }
 
-// -- 1/3 CORE · valid config -- <- START HERE
 
 describe("valid config", () => {
   test("loads scopes, defaults, and the pinned detector", () => {
@@ -92,11 +71,25 @@ claims:
     expect(config.orphan_scopes).toBeUndefined();
     expect(config.claims).toBeUndefined();
   });
+
+  test("unknown orphan surface keys fail closed", () => {
+    expect(() =>
+      loadConfig(
+        configAt(configYaml(`orphan_scopes:\n  tools:\n    files: ["tools/**"]\n    test_file: ["test/**"]\n`)),
+      ),
+    ).toThrow(/unknown.*test_file/);
+  });
+
+  test("unknown claims surface keys fail closed", () => {
+    expect(() =>
+      loadConfig(
+        configAt(configYaml(`claims:\n  file: .slop/claims.yml\n  surfaces:\n    tools:\n      filez: ["tools/**"]\n`)),
+      ),
+    ).toThrow(/unknown.*filez/);
+  });
 });
 
-// -/ 1/3
 
-// -- 2/3 HELPER · malformed config fails closed --
 
 describe("malformed config fails closed", () => {
   const cases: [string, string, string][] = [
@@ -233,9 +226,7 @@ scopes: {}
   });
 });
 
-// -/ 2/3
 
-// -- 3/3 HELPER · readScopeNames --
 
 describe("readScopeNames", () => {
   test("returns the declared scopes", () => {
@@ -253,5 +244,3 @@ describe("readScopeNames", () => {
     expect(() => readScopeNames(configAt("a: 1\na: 2\n"))).toThrow(/cannot read scopes/);
   });
 });
-
-// -/ 3/3

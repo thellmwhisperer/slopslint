@@ -1,24 +1,5 @@
-/**
- * @overview slopslint public API barrel. ~100 lines, exports only.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at the export groups       <- CORE package surface
- *
- *   MAIN FLOW
- *   internal modules -> named re-exports -> package consumers
- *
- *   PUBLIC API
- *   Every named export below; grouped by owning module
- *
- *   INTERNALS
- *   (none)
- *
- * @exports canonical API, ceilings API, check API, config API, claims API, orphan API, surfaces API, detector API, errors API, repo API, tombstone API, version API
- * @deps all public src modules
- */
+// Public slopslint API exports.
 
-// -- 1/1 CORE · public re-export registry -- <- START HERE
 export {
   canonicalJson,
   canonicalSha256,
@@ -105,5 +86,3 @@ export {
   type Tombstone,
 } from "./tombstone.ts";
 export { DETECTOR_NAME, DETECTOR_VERSION, VERSION } from "./version.ts";
-
-// -/ 1/1

@@ -1,23 +1,4 @@
-/**
- * @overview End-to-end orphan and claims integration. ~150 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at "opt-in output"      <- compatibility and report shape
- *   2. Read "orphan enforcement"     <- ceilings and tombstones
- *
- *   MAIN FLOW
- *   consumer repo -> runCheck -> classify -> enforce
- *
- *   PUBLIC API
- *   (none; test module)
- *
- *   INTERNALS
- *   extensionRepo, orphanRecord
- *
- * @exports
- * @deps bun:test, node:path, ../src/check.ts, ./helpers.ts
- */
+// End-to-end orphan and claims integration tests.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCheck, type ExtendedSummary } from "../src/check.ts";
@@ -78,13 +59,15 @@ match:
 `;
 }
 
-// -- 1/2 CORE · opt-in output -- <- START HERE
 
 describe("opt-in output", () => {
   test("configured checks add orphan evidence and verified claims", () => {
     const summary = runCheck({ repoRoot: extensionRepo() }) as ExtendedSummary;
     expect(summary.orphan_scopes).toHaveLength(1);
     expect(summary.orphan_scopes![0]!.count).toBe(1);
+    expect(summary.orphan_scopes![0]!.active_orphans).toBeUndefined();
+    expect(summary.orphan_scopes![0]!.accepted_orphans).toBeUndefined();
+    expect(summary.diagnostics).toBeUndefined();
     expect(summary.orphan_scopes![0]!.orphans[0]).toEqual(
       expect.objectContaining({
         scope: "tools",
@@ -112,9 +95,7 @@ describe("opt-in output", () => {
   });
 });
 
-// -/ 1/2
 
-// -- 2/2 HELPER · orphan enforcement --
 
 describe("orphan enforcement", () => {
   test("a matching tombstone consumes an orphan and a zero ceiling passes", () => {
@@ -155,6 +136,22 @@ orphan_scopes:
       /stale orphan tombstone/,
     );
   });
-});
 
-// -/ 2/2
+  test.each([
+    [0, /orphan debt increased/],
+    [2, /Debt has decreased/],
+  ])("active orphan count rejects ceiling %i", (ceiling, message) => {
+    const root = extensionRepo();
+    write(
+      join(root, ".slop/ceilings.yml"),
+      `schema: 1
+scopes:
+  python_production: {active_clones_ceiling: 1}
+  python_tests_fixtures: {active_clones_ceiling: 1}
+orphan_scopes:
+  tools: {active_orphans_ceiling: ${ceiling}}
+`,
+    );
+    expect(() => runCheck({ repoRoot: root, classify: true, enforce: true })).toThrow(message);
+  });
+});
