@@ -232,6 +232,19 @@ Two rules keep that honest:
   **standing** records: validated, reported, never matched, never stale. They
   carry the incident now and reserve the schema path for a detector later.
 
+Standing records use one of the reserved families, which have no detector yet:
+
+* `agent_artifact_in_repo`
+* `documented_as_convention`
+* `environment_layout_coupling`
+* `inline_foreign_language`
+* `runtime_dependency`
+* `speculative_hardening`: code and tests added to guard against a failure the
+  design already rules out (random suffixes on names unique by construction,
+  retries around calls that cannot fail transiently, validation of values the
+  caller produces itself)
+* `subprocess_foreign_interpreter`
+
 ## Check output
 
 With only duplication configured, output remains the original array (or the

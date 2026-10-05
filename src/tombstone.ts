@@ -33,6 +33,7 @@ export const NON_DUPLICATION_FAMILIES = [
   "environment_layout_coupling",
   "inline_foreign_language",
   "runtime_dependency",
+  "speculative_hardening",
   "subprocess_foreign_interpreter",
 ] as const;
 
