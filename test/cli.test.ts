@@ -341,6 +341,35 @@ describe("tombstone", () => {
     expect(run("tombstone", "check", "--repo-root", root).code).toBe(0);
   });
 
+  test("add accepts the speculative_hardening family for alien_code", () => {
+    const root = consumerRepo();
+    const added = run(
+      "tombstone",
+      "add",
+      "--id",
+      "T-UUID-BRANCH-SUFFIX",
+      "--status",
+      "accepted",
+      "--category",
+      "alien_code",
+      "--title",
+      "uuid suffix on branch names unique by construction",
+      "--family",
+      "speculative_hardening",
+      "--artifact",
+      "py/a.py",
+      "--created-at",
+      "2026-10-05",
+      "--repo-root",
+      root,
+    );
+    expect(added.err).toBe("");
+    expect(added.code).toBe(0);
+    const checked = run("tombstone", "check", "--repo-root", root);
+    expect(checked.err).toBe("");
+    expect(checked.code).toBe(0);
+  });
+
   test("an unknown status is rejected", () => {
     const result = run(
       "tombstone",
