@@ -47,7 +47,7 @@ Published for `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, and
 **GitHub Action:**
 
 ```yaml
-- uses: thellmwhisperer/slopslint@v0.2.0
+- uses: thellmwhisperer/slopslint@v0.3.0
   with:
     args: check --classify --enforce
 ```
