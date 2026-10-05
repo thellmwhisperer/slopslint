@@ -231,19 +231,32 @@ Two rules keep that honest:
 * categories with no detector (`alien_code`, `debt_normalization`) are
   **standing** records: validated, reported, never matched, never stale. They
   carry the incident now and reserve the schema path for a detector later.
+  Because nothing matches them, several standing records may share family,
+  artifact and category (one per incident); their ids must still be unique.
 
 Standing records use one of the reserved families, which have no detector yet:
 
 * `agent_artifact_in_repo`
 * `documented_as_convention`
 * `environment_layout_coupling`
+* `format_churn`: formatting changes to lines the change did not otherwise
+  touch, with no rule in the repository requiring them
 * `inline_foreign_language`
+* `mock_heavy_test`: a test that replaces the code under test's own internals
+  with mocks or monkeypatches instead of driving it through its inputs
 * `runtime_dependency`
+* `self_validating_test`: a test whose fixture encodes the author's assumption
+  about an external tool or format, so it passes against behaviour that does
+  not exist
+* `speculative_feature`: an option, flag, parameter or code path with no caller
+  or user that asked for it
 * `speculative_hardening`: code and tests added to guard against a failure the
   design already rules out (random suffixes on names unique by construction,
   retries around calls that cannot fail transiently, validation of values the
   caller produces itself)
 * `subprocess_foreign_interpreter`
+* `test_weakening`: a test an issue or contract asks for is deleted, skipped or
+  loosened
 
 ## Check output
 
