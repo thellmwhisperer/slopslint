@@ -1,6 +1,6 @@
 {
   "name": "slopslint",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Deterministic repository gate for duplication, orphan surfaces, contract claims, tombstones, and monotonic ceilings.",
   "license": "MIT",
   "type": "module",
