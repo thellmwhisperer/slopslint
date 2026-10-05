@@ -123,6 +123,15 @@ describe("load fails closed", () => {
     expect(() => loadTombstones(dir, { allowedScopes: SCOPES })).toThrow(/duplicate matcher/);
   });
 
+  test("standing records with the same id still fail closed", () => {
+    const seen = new Set<string>();
+    const matchers = new Set<string>();
+    validateOne("T.yml", alienRecord("T"), seen, matchers, undefined, new Set(SCOPES));
+    expect(() =>
+      validateOne("T.yml", alienRecord("T"), seen, matchers, undefined, new Set(SCOPES)),
+    ).toThrow(/duplicate tombstone id/);
+  });
+
   test.each(["/etc/passwd", "../secret", "../../repo/package.json"])(
     "path escape %s is rejected",
     (bad) => {
@@ -218,6 +227,34 @@ describe("load happy paths", () => {
     const records = loadTombstones(dir, { allowedScopes: SCOPES });
     expect(family(records[0]!)).toBe(fam);
     expect(isStanding(records[0]!)).toBe(true);
+  });
+
+  test("standing records may share family, artifact and category", () => {
+    const standing = (id: string, fam: string) => {
+      const record = alienRecord(id);
+      record["match"] = { family: fam, artifact: "marker.txt" };
+      (record["incident"] as Record<string, unknown>)["evidence"] = [{ example: "x", family: fam }];
+      return stringify(record);
+    };
+    const { dir, root } = recordDir(standing("T-SH-1", "speculative_hardening"), "T-SH-1.yml");
+    write(join(dir, "T-SH-2.yml"), standing("T-SH-2", "speculative_hardening"));
+    write(join(dir, "T-TW.yml"), standing("T-TW", "test_weakening"));
+    const records = loadTombstones(dir, { repoRoot: root });
+    expect(records.map((r) => r.id)).toEqual(["T-SH-1", "T-SH-2", "T-TW"]);
+  });
+
+  test.each([
+    "test_weakening",
+    "mock_heavy_test",
+    "self_validating_test",
+    "speculative_feature",
+    "format_churn",
+  ])("family %s is reserved for alien_code", (fam) => {
+    const record = alienRecord("T");
+    record["match"] = { family: fam, artifact: "marker.txt" };
+    (record["incident"] as Record<string, unknown>)["evidence"] = [{ example: "x", family: fam }];
+    const { dir } = recordDir(stringify(record), "T.yml");
+    expect(family(loadTombstones(dir)[0]!)).toBe(fam);
   });
 
   test("reading dates as strings survives YAML quoting", () => {

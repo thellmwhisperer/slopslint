@@ -31,10 +31,15 @@ export const NON_DUPLICATION_FAMILIES = [
   "agent_artifact_in_repo",
   "documented_as_convention",
   "environment_layout_coupling",
+  "format_churn",
   "inline_foreign_language",
+  "mock_heavy_test",
   "runtime_dependency",
+  "self_validating_test",
+  "speculative_feature",
   "speculative_hardening",
   "subprocess_foreign_interpreter",
+  "test_weakening",
 ] as const;
 
 /** Every family the schema accepts. */
@@ -248,14 +253,9 @@ function validateMatch(
       `${matchFamily} (reserved for an active detector)`,
   );
   const what = `${fileName}: ${id}: match.artifact`;
-  const artifact = checkRepoRelative(match["artifact"], what);
-  verifyArtifact(artifact, repoRoot, what);
-  const key = `${matchFamily}\0${artifact}\0${category}`;
-  ensureRecord(
-    !seenMatchers.has(key),
-    `${fileName}: ${id}: duplicate matcher (same family+artifact+category)`,
-  );
-  seenMatchers.add(key);
+  verifyArtifact(checkRepoRelative(match["artifact"], what), repoRoot, what);
+  // Standing records are never matched against a finding, so several incidents
+  // may share one family+artifact; only their ids must be unique.
   return match;
 }
 
