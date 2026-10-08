@@ -99,20 +99,26 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function hasBoundedPathReference(source: string, text: string, target: string, directory: boolean): boolean {
+function hasBoundedPathReference(
+  source: string,
+  text: string,
+  target: string,
+  directory: boolean,
+  goModule: string | undefined,
+): boolean {
   const descendant = directory ? "(?:/[A-Za-z0-9_@+.-]+)*" : "";
   const pattern = new RegExp(
     `(?:^|[^A-Za-z0-9_./-])([A-Za-z0-9_./-]*?)${escapeRegExp(target)}${descendant}(?=$|[^A-Za-z0-9_./-])`,
     "gm",
   );
   for (const [, prefix] of text.matchAll(pattern)) {
-    if (!prefix) return true;
+    if (!prefix || (goModule && prefix === `${goModule}/`)) return true;
     if (prefix.startsWith(".") && posix.join(posix.dirname(source), prefix + target) === target) return true;
   }
   return false;
 }
 
-function referencesPath(source: TextSource, surface: Surface): "import" | "path" | undefined {
+function referencesPath(source: TextSource, surface: Surface, goModule: string | undefined): "import" | "path" | undefined {
   for (const specifier of source.specifiers) {
     const candidate = resolveSpecifier(source.path, specifier);
     if (!candidate) continue;
@@ -122,7 +128,7 @@ function referencesPath(source: TextSource, surface: Surface): "import" | "path"
       return "import";
     }
   }
-  if (hasBoundedPathReference(source.path, source.text, surface.path, surface.kind === "directory")) return "path";
+  if (hasBoundedPathReference(source.path, source.text, surface.path, surface.kind === "directory", goModule)) return "path";
   return undefined;
 }
 
@@ -205,6 +211,7 @@ function referencesFor(
   sources: readonly TextSource[],
   testFiles: ReadonlySet<string>,
   generationFiles: ReadonlySet<string>,
+  goModule: string | undefined,
 ): { ignored: OrphanEvidence[]; consumed: boolean } {
   const ignored: OrphanEvidence[] = [];
   let consumed = false;
@@ -216,7 +223,7 @@ function referencesFor(
           : source.path === surface.path && source.text.includes(surface.symbol!)
             ? "symbol"
             : undefined
-        : referencesPath(source, surface);
+        : referencesPath(source, surface, goModule);
     if (!reference) continue;
     const reason = classifyReason(source.path, surface, testFiles, generationFiles);
     if (reason === "consumer") consumed = true;
@@ -242,9 +249,10 @@ export function censusOrphans(
   const sources = readSources(repoRoot, [...globalIgnore, ...config.ignore]);
   const testFiles = matchedPaths(config.test_files, repoRoot);
   const generationFiles = matchedPaths(config.generation_files, repoRoot);
+  const goModule = sources.find((source) => source.path === "go.mod")?.text.match(/^module\s+(\S+)/m)?.[1];
   const orphans: OrphanFinding[] = [];
   for (const surface of surfaces) {
-    const references = referencesFor(surface, sources, testFiles, generationFiles);
+    const references = referencesFor(surface, sources, testFiles, generationFiles, goModule);
     if (!references.consumed) {
       orphans.push({
         ...surface,
