@@ -94,6 +94,20 @@ describe("reference classification", () => {
     const directoryScope = { ...scope, files: [], directories: ["tools/kept"] };
     expect(censusOrphans(root, "tools", directoryScope, []).orphans).toHaveLength(1);
   });
+
+  test("a relative Markdown link that resolves to the target is a consumer", () => {
+    const root = tempTree();
+    write(join(root, "src/used.ts"), "export const used = true;\n");
+    write(join(root, "docs/usage.md"), "[`used.ts`](../src/used.ts)\n");
+    expect(censusOrphans(root, "production", scope, []).orphans).toEqual([]);
+  });
+
+  test("a relative link that resolves elsewhere is not a reference", () => {
+    const root = tempTree();
+    write(join(root, "src/lonely.ts"), "export const lonely = true;\n");
+    write(join(root, "docs/guide/usage.md"), "[`lonely.ts`](../src/lonely.ts)\n");
+    expect(censusOrphans(root, "production", scope, []).orphans).toHaveLength(1);
+  });
 });
 
 
