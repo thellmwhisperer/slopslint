@@ -99,13 +99,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function hasBoundedPathReference(
-  source: string,
-  text: string,
-  target: string,
-  directory: boolean,
-  goModule: string | undefined,
-): boolean {
+function hasBoundedPathReference(source: string, text: string, target: string, directory: boolean, goModule?: string): boolean {
   const descendant = directory ? "(?:/[A-Za-z0-9_@+.-]+)*" : "";
   const pattern = new RegExp(
     `(?:^|[^A-Za-z0-9_./-])([A-Za-z0-9_./-]*?)${escapeRegExp(target)}${descendant}(?=$|[^A-Za-z0-9_./-])`,
@@ -118,7 +112,7 @@ function hasBoundedPathReference(
   return false;
 }
 
-function referencesPath(source: TextSource, surface: Surface, goModule: string | undefined): "import" | "path" | undefined {
+function referencesPath(source: TextSource, surface: Surface, goModule?: string): "import" | "path" | undefined {
   for (const specifier of source.specifiers) {
     const candidate = resolveSpecifier(source.path, specifier);
     if (!candidate) continue;
@@ -211,7 +205,7 @@ function referencesFor(
   sources: readonly TextSource[],
   testFiles: ReadonlySet<string>,
   generationFiles: ReadonlySet<string>,
-  goModule: string | undefined,
+  goModule?: string,
 ): { ignored: OrphanEvidence[]; consumed: boolean } {
   const ignored: OrphanEvidence[] = [];
   let consumed = false;
