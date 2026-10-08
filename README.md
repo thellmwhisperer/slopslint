@@ -127,12 +127,13 @@ production scope.
 An orphan scope enumerates exactly the configured files, directories, and
 JavaScript/TypeScript exports. The census then searches repository text for
 deterministic inbound evidence: static or dynamic imports, `require` calls,
-repository-relative path strings (including build files, CI, and docs), and
-embed/generate directives that name the path. A surface is an orphan when it
-has no inbound consumer outside itself, configured test files, or configured
-generation files. Those ignored references are included in the report with
-their reason. slopslint does not execute code, inspect runtime telemetry, or ask
-a model to infer ownership.
+repository-relative path strings (including build files, CI, and docs). In
+Markdown, dot-relative paths such as `../src/used.ts` are resolved from the
+document's directory. Embed/generate directives that name the path also count.
+A surface is an orphan when it has no inbound consumer outside itself,
+configured test files, or configured generation files. Those ignored
+references are included in the report with their reason. slopslint does not
+execute code, inspect runtime telemetry, or ask a model to infer ownership.
 
 `.slop/ceilings.yml` declares what you will tolerate:
 
