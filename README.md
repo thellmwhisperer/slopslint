@@ -326,23 +326,6 @@ bun test
 bun run typecheck
 bun run build:binaries
 ```
-
-## Provenance
-
-Extracted from [roca-madre](https://github.com/thellmwhisperer/roca-madre),
-where it ran as an in-tree Python wrapper around a pinned `jscpd` executable.
-The port to TypeScript replaced that process boundary with a linked library,
-which removed the apparatus the boundary required — a subprocess version probe,
-JSON revalidation of the detector's output, and a glob-prefix guard that existed
-only because the external detector matched globs with separator-crossing
-wildcards. The Python suite is the contract these tests were written against.
-
-Clone assembly is owned here rather than taken from `@jscpd/core`, whose
-`RabinKarp` loop extends an open clone with whatever frame its store last
-returned without checking that the stored side advanced; a hash hit that jumps
-backwards yields a clone whose end line precedes its start line. A range that
-cannot exist is exactly what a fail-closed gate must never emit.
-
 ## License
 
 MIT
